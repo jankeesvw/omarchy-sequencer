@@ -66,7 +66,7 @@ fn main() -> eframe::Result {
             .with_transparent(true)
             .with_title("Sequencer")
             .with_inner_size([1400.0, 800.0])
-            .with_min_inner_size([1240.0, 420.0]),
+            .with_min_inner_size([1280.0, 360.0]),
         ..Default::default()
     };
     // With vsync, Mesa blocks in swap_buffers while the window is hidden (another workspace),

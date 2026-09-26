@@ -160,12 +160,18 @@ pub fn install(entry: &CatalogEntry, progress: &Arc<Mutex<String>>) -> Result<()
                 if files.is_empty() {
                     return Err("no WAV files found".into());
                 }
-                for (i, name) in files.iter().enumerate() {
-                    say(format!("{}/{} files", i + 1, files.len()));
-                    let url = format!("https://archive.org/download/{item}/{}", encode(name));
-                    let file = unique_path(&tmp, name);
-                    download(&url, &file)?;
+                // Eight at a time: archive.org answers every file with a redirect, one by one is slow.
+                let mut done = 0;
+                for chunk in files.chunks(8) {
+                    say(format!("{done}/{} files", files.len()));
+                    let jobs: Vec<(String, PathBuf)> = chunk
+                        .iter()
+                        .map(|name| (format!("https://archive.org/download/{item}/{}", encode(name)), reserve(&tmp, name)))
+                        .collect();
+                    download_all(&jobs)?;
+                    done += chunk.len();
                 }
+                say(format!("{done}/{} files", files.len()));
             }
             Source::Zip(url, take) => {
                 say("downloading…".into());
@@ -209,6 +215,24 @@ pub fn install(entry: &CatalogEntry, progress: &Arc<Mutex<String>>) -> Result<()
 fn download(url: &str, to: &Path) -> Result<(), String> {
     let ok = Command::new("curl").args(["-fsSL", "--retry", "2", "-o"]).arg(to).arg(url).status().map_err(|e| format!("curl: {e}"))?;
     if ok.success() { Ok(()) } else { Err(format!("download failed: {url}")) }
+}
+
+/// Downloads several files in one `curl --parallel`.
+fn download_all(jobs: &[(String, PathBuf)]) -> Result<(), String> {
+    let mut cmd = Command::new("curl");
+    cmd.args(["-fsSL", "--retry", "2", "--parallel", "--parallel-max", "8"]);
+    for (url, to) in jobs {
+        cmd.arg("-o").arg(to).arg(url);
+    }
+    let ok = cmd.status().map_err(|e| format!("curl: {e}"))?;
+    if ok.success() { Ok(()) } else { Err("a download failed".into()) }
+}
+
+/// Like `unique_path`, and creates the file so the next name in the same batch differs.
+fn reserve(dir: &Path, name: &str) -> PathBuf {
+    let path = unique_path(dir, name);
+    let _ = std::fs::File::create(&path);
+    path
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {

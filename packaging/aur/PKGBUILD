@@ -1,0 +1,26 @@
+# Maintainer: Jankees van Woezik <mail@jankeesvw.com>
+
+pkgname=sequencer-bin
+_name=sequencer
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="A step sequencer for Omarchy: TR-808 drums, riffs, 90s rave sounds, effects per track, free sound packs and recording"
+arch=('x86_64')
+url="https://github.com/jankeesvw/sequencer"
+license=('MIT')
+depends=('alsa-lib' 'gcc-libs' 'glibc' 'libglvnd' 'wayland' 'libxkbcommon' 'fontconfig' 'curl' 'libarchive')
+optdepends=('pipewire-alsa: play through PipeWire, part of every Omarchy install')
+provides=("$_name")
+conflicts=("$_name")
+options=('!debug' '!strip')
+source_x86_64=("$url/releases/download/v$pkgver/$_name-$pkgver-x86_64-linux.tar.gz")
+sha256sums_x86_64=('07ef1ea1284e29ecdb4365e931c473871b91e6dcf4109c8f805eab97ae754e04')
+
+package() {
+  cd "$_name-$pkgver"
+  install -Dm755 "$_name" "$pkgdir/usr/bin/$_name"
+  install -Dm644 "$_name.desktop" "$pkgdir/usr/share/applications/$_name.desktop"
+  install -Dm644 "$_name.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_name.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

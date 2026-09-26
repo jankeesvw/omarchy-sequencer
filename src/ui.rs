@@ -599,7 +599,7 @@ impl App {
                 }
                 // The song name opens the settings of the whole song.
                 let settings_open = self.settings_open;
-                let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", self.song_name)).color(if settings_open { th.on(th.accent) } else { th.fg_bright }))
+                let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", short(&self.song_name, 18))).color(if settings_open { th.on(th.accent) } else { th.fg_bright }))
                     .fill(if settings_open { th.accent } else { th.bg_light })
                     .min_size(Vec2::new(CONTROL_H, CONTROL_H));
                 if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and volume").clicked() {
@@ -1563,7 +1563,7 @@ impl App {
                     }
                 });
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(format!("Songs save themselves as you work, in {}", songs::dir().display())).color(th.fg_dim).size(11.0));
+                ui.label(egui::RichText::new(format!("Songs save themselves as you work, in {}", tilde(&songs::dir()))).color(th.fg_dim).size(11.0));
             });
         match action {
             Some(("new", base)) => {
@@ -1866,7 +1866,7 @@ fn apply_theme(ctx: &egui::Context, th: &Theme) {
 }
 
 fn section_gap(ui: &mut egui::Ui) {
-    ui.add_space(18.0);
+    ui.add_space(12.0);
 }
 
 /// A 0..1 slider that shows its value as a percentage.
@@ -1961,7 +1961,7 @@ fn pack_card(ui: &mut egui::Ui, th: &Theme, card: PackCard, time: f32) -> Option
     let wrap = ui.available_width() - text_x - 104.0;
     let meta = ui.painter().layout(format!("{} · {}", entry.author, entry.license), FontId::monospace(10.0), th.fg_dim, wrap);
     let about = ui.painter().layout(entry.about.to_owned(), FontId::monospace(11.0), th.fg, wrap);
-    let height = (12.0 + 18.0 + meta.size().y + 6.0 + about.size().y + 12.0).max(72.0);
+    let height = (12.0 + 18.0 + meta.size().y + 6.0 + about.size().y + 12.0).max(92.0);
     let (rect, hover) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::ZERO, if hover.hovered() { th.selection } else { th.bg_light });
@@ -2027,4 +2027,18 @@ fn pack_card(ui: &mut egui::Ui, th: &Theme, card: PackCard, time: f32) -> Option
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
+
+/// Cuts a name to `max` characters with an ellipsis.
+fn short(name: &str, max: usize) -> String {
+    if name.chars().count() <= max { name.to_owned() } else { format!("{}…", name.chars().take(max - 1).collect::<String>()) }
+}
+
+/// A path with the home folder written as `~`.
+fn tilde(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    match dirs::home_dir() {
+        Some(home) => text.replacen(&home.display().to_string(), "~", 1),
+        None => text,
+    }
 }
