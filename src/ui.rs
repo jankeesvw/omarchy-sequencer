@@ -1398,7 +1398,7 @@ impl eframe::App for App {
 }
 
 /// How opaque the window background is; Hyprland blurs what shows through.
-const BACKGROUND_OPACITY: f32 = 0.93;
+const BACKGROUND_OPACITY: f32 = 0.97;
 
 fn see_through(c: Color32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (BACKGROUND_OPACITY * 255.0) as u8)
