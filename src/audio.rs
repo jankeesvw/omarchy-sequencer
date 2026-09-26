@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::pattern::{Cell, MAX_TRACKS, Song};
+use crate::pattern::{Cell, FilterKind, Fx, MAX_TRACKS, Song};
 use crate::samples::Sample;
 
 pub const SCOPE_LEN: usize = 1024;
@@ -20,8 +20,8 @@ pub struct Shared {
     /// Peak level per track (f32 bits) for the meters.
     pub levels: [AtomicU32; MAX_TRACKS],
     pub scope: Mutex<Vec<f32>>,
-    /// Sample previews requested by the UI (sample index, gain).
-    pub preview: Mutex<Vec<(usize, f32)>>,
+    /// Sample previews requested by the UI (sample index, gain, track to play through).
+    pub preview: Mutex<Vec<(usize, f32, Option<usize>)>>,
     /// New samples (recordings) the engine should add to its list.
     pub incoming: Mutex<Vec<Arc<Sample>>>,
 }
@@ -52,7 +52,6 @@ struct Voice {
     rate: f64,
     gain_l: f32,
     gain_r: f32,
-    send: f32,
     fade: Option<f32>,
     /// Frames until the note is cut off; None plays the whole sample.
     gate: Option<f64>,
@@ -72,6 +71,209 @@ pub struct Engine {
     delay_pos: usize,
     filter: [[f32; 2]; 2],
     cutoff: f32,
+    /// Per track: what the voices played this frame, and the state of its effects.
+    bus: [[f32; 2]; MAX_TRACKS],
+    fx: [FxState; MAX_TRACKS],
+    reverb: Reverb,
+    /// Frames since playback started, for tempo synced effects.
+    clock: f64,
+}
+
+/// One biquad section (RBJ cookbook), stereo.
+#[derive(Clone, Copy, Default)]
+struct Biquad {
+    b: [f32; 3],
+    a: [f32; 2],
+    z: [[f32; 2]; 2],
+}
+
+impl Biquad {
+    fn set(&mut self, kind: u8, hz: f32, db: f32, rate: f32) {
+        let a = 10f32.powf(db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * hz / rate;
+        let (sin, cos) = w.sin_cos();
+        let (b0, b1, b2, a0, a1, a2);
+        match kind {
+            // Low shelf and high shelf with a slope of 1.
+            0 | 2 => {
+                let alpha = sin / 2.0 * std::f32::consts::SQRT_2;
+                let s = if kind == 0 { 1.0 } else { -1.0 };
+                let sq = 2.0 * a.sqrt() * alpha;
+                b0 = a * ((a + 1.0) - s * (a - 1.0) * cos + sq);
+                b1 = s * 2.0 * a * ((a - 1.0) - s * (a + 1.0) * cos);
+                b2 = a * ((a + 1.0) - s * (a - 1.0) * cos - sq);
+                a0 = (a + 1.0) + s * (a - 1.0) * cos + sq;
+                a1 = -s * 2.0 * ((a - 1.0) + s * (a + 1.0) * cos);
+                a2 = (a + 1.0) + s * (a - 1.0) * cos - sq;
+            }
+            // Peak with a Q of 0.8.
+            _ => {
+                let alpha = sin / (2.0 * 0.8);
+                b0 = 1.0 + alpha * a;
+                b1 = -2.0 * cos;
+                b2 = 1.0 - alpha * a;
+                a0 = 1.0 + alpha / a;
+                a1 = -2.0 * cos;
+                a2 = 1.0 - alpha / a;
+            }
+        }
+        self.b = [b0 / a0, b1 / a0, b2 / a0];
+        self.a = [a1 / a0, a2 / a0];
+    }
+
+    fn process(&mut self, x: [f32; 2]) -> [f32; 2] {
+        let mut y = [0.0; 2];
+        for ch in 0..2 {
+            let [z1, z2] = &mut self.z[ch];
+            y[ch] = self.b[0] * x[ch] + *z1;
+            *z1 = self.b[1] * x[ch] - self.a[0] * y[ch] + *z2;
+            *z2 = self.b[2] * x[ch] - self.a[1] * y[ch];
+            if !y[ch].is_finite() {
+                *z1 = 0.0;
+                *z2 = 0.0;
+                y[ch] = 0.0;
+            }
+        }
+        y
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct FxState {
+    /// State variable filter: [low, band] per channel.
+    svf: [[f32; 2]; 2],
+    hold: [f32; 2],
+    phase: f32,
+    ring_phase: f32,
+    chop_gain: f32,
+    eq: [Biquad; 3],
+    /// The EQ settings the biquads were computed for.
+    eq_for: [f32; 3],
+}
+
+impl FxState {
+    /// `beat` is the position within the chop cycle, 0..1.
+    fn process(&mut self, fx: &Fx, mut x: [f32; 2], rate: f32, beat: f32) -> [f32; 2] {
+        let eq = [fx.eq_low, fx.eq_mid, fx.eq_high];
+        if eq != [0.0; 3] {
+            if eq != self.eq_for {
+                for (band, (hz, db)) in [(100.0, eq[0]), (1000.0, eq[1]), (8000.0, eq[2])].into_iter().enumerate() {
+                    self.eq[band].set(band as u8, hz, db, rate);
+                }
+                self.eq_for = eq;
+            }
+            for band in &mut self.eq {
+                x = band.process(x);
+            }
+        }
+        if fx.drive > 0.0 {
+            let g = 1.0 + fx.drive * 12.0;
+            for s in &mut x {
+                *s = (*s * g).tanh() / g.tanh() * (1.0 - fx.drive * 0.4);
+            }
+        }
+        if fx.distort > 0.0 {
+            // Hard clipping with lots of gain in front, then brought back down.
+            let g = 1.0 + fx.distort * 40.0;
+            let ceiling = 0.35;
+            for s in &mut x {
+                *s = (*s * g).clamp(-ceiling, ceiling) * (1.0 / (1.0 + fx.distort * 1.5));
+            }
+        }
+        if fx.ring > 0.0 {
+            let hz = 30.0 * (2000.0f32 / 30.0).powf(fx.ring_freq);
+            self.ring_phase = (self.ring_phase + hz / rate).fract();
+            let m = (self.ring_phase * std::f32::consts::TAU).sin();
+            for s in &mut x {
+                *s = *s * (1.0 - fx.ring) + *s * m * fx.ring;
+            }
+        }
+        if fx.downsample > 0.0 {
+            let n = 1.0 + fx.downsample * 23.0;
+            self.phase += 1.0;
+            if self.phase >= n {
+                self.phase -= n;
+                self.hold = x;
+            }
+            x = self.hold;
+        }
+        if fx.crush > 0.0 {
+            let levels = 2f32.powf(15.0 - fx.crush * 13.0);
+            for s in &mut x {
+                *s = (*s * levels).round() / levels;
+            }
+        }
+        if fx.filter != FilterKind::Off {
+            let hz = 40.0 * (18_000.0f32 / 40.0).powf(fx.cutoff);
+            let f = 2.0 * (std::f32::consts::PI * hz.min(rate / 6.0) / rate).sin();
+            let q = 1.5 - fx.resonance * 1.4;
+            for (ch, s) in x.iter_mut().enumerate() {
+                let [low, band] = &mut self.svf[ch];
+                *low += f * *band;
+                let high = *s - *low - q * *band;
+                *band += f * high;
+                *s = match fx.filter {
+                    FilterKind::Low => *low,
+                    FilterKind::High => high,
+                    FilterKind::Band => *band,
+                    FilterKind::Off => *s,
+                };
+                if !low.is_finite() || !band.is_finite() {
+                    *low = 0.0;
+                    *band = 0.0;
+                    *s = 0.0;
+                }
+            }
+        }
+        // Chop: on for the first half of each cycle, with short ramps so it doesn't click.
+        let target = if fx.chop > 0.0 && beat >= 0.5 { 1.0 - fx.chop } else { 1.0 };
+        self.chop_gain += (target - self.chop_gain) * 0.004;
+        if fx.chop > 0.0 || self.chop_gain < 0.999 {
+            x[0] *= self.chop_gain;
+            x[1] *= self.chop_gain;
+        }
+        x
+    }
+}
+
+/// A small Freeverb style reverb: parallel combs into series allpasses, per channel.
+struct Reverb {
+    combs: [[(Vec<f32>, usize, f32); 4]; 2],
+    allpasses: [[(Vec<f32>, usize); 2]; 2],
+}
+
+impl Reverb {
+    fn new(rate: u32) -> Self {
+        let scale = rate as f32 / 44_100.0;
+        let len = |n: usize, ch: usize| ((n + ch * 23) as f32 * scale) as usize;
+        Self {
+            combs: std::array::from_fn(|ch| std::array::from_fn(|i| (vec![0.0; len([1116, 1188, 1277, 1356][i], ch)], 0, 0.0))),
+            allpasses: std::array::from_fn(|ch| std::array::from_fn(|i| (vec![0.0; len([556, 441][i], ch)], 0))),
+        }
+    }
+
+    fn process(&mut self, x: [f32; 2]) -> [f32; 2] {
+        let mut out = [0.0; 2];
+        for ch in 0..2 {
+            let input = x[ch] * 0.2;
+            let mut sum = 0.0;
+            for (buf, pos, store) in &mut self.combs[ch] {
+                let y = buf[*pos];
+                *store = y * 0.75 + *store * 0.25;
+                buf[*pos] = input + *store * 0.84;
+                *pos = (*pos + 1) % buf.len();
+                sum += y;
+            }
+            for (buf, pos) in &mut self.allpasses[ch] {
+                let b = buf[*pos];
+                buf[*pos] = sum + b * 0.5;
+                sum = b - sum;
+                *pos = (*pos + 1) % buf.len();
+            }
+            out[ch] = sum;
+        }
+        out
+    }
 }
 
 impl Engine {
@@ -90,6 +292,10 @@ impl Engine {
             delay_pos: 0,
             filter: [[0.0; 2]; 2],
             cutoff: 1.0,
+            bus: [[0.0; 2]; MAX_TRACKS],
+            fx: [FxState::default(); MAX_TRACKS],
+            reverb: Reverb::new(out_rate),
+            clock: 0.0,
         }
     }
 
@@ -98,7 +304,7 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn trigger(&mut self, sample: usize, track: Option<usize>, gain: f32, pitch: f32, pan: f32, send: f32, gate: Option<f64>) {
+    fn trigger(&mut self, sample: usize, track: Option<usize>, gain: f32, pitch: f32, pan: f32, reverse: bool, gate: Option<f64>) {
         if sample >= self.samples.len() {
             return;
         }
@@ -113,16 +319,17 @@ impl Engine {
         }
         let s = &self.samples[sample];
         let rate = s.rate as f64 / self.out_rate * 2f64.powf(pitch as f64 / 12.0);
+        // Backwards: start at the end and step down.
+        let (pos, rate) = if reverse { ((s.data.len().saturating_sub(2)) as f64, -rate) } else { (0.0, rate) };
         // Equal-power panning.
         let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
         self.voices.push(Voice {
             sample,
             track,
-            pos: 0.0,
+            pos,
             rate,
             gain_l: gain * angle.cos(),
             gain_r: gain * angle.sin(),
-            send,
             fade: None,
             gate,
         });
@@ -149,7 +356,7 @@ impl Engine {
                 // Long notes (more than one step) sound exactly as long as they are in the grid.
                 let blocks = lane.lens[step] as f64;
                 let gate = (blocks > 1.0).then_some(blocks * len);
-                self.trigger(t.sample, Some(i), t.volume * accent, t.pitch, t.pan, t.send, gate);
+                self.trigger(t.sample, Some(i), t.volume * accent, t.pitch + t.fx.fine / 100.0, t.pan, t.fx.reverse, gate);
                 self.shared.levels[i].store(accent.to_bits(), Ordering::Relaxed);
             }
         }
@@ -168,13 +375,18 @@ impl Engine {
         if let Ok(mut inc) = self.shared.incoming.try_lock() {
             self.samples.append(&mut inc);
         }
-        for (sample, gain) in previews {
-            self.trigger(sample, None, gain, 0.0, 0.0, 0.0, None);
-        }
         let shared = self.shared.clone();
         let song = shared.song.lock().unwrap();
+        for (sample, gain, track) in previews {
+            // A preview through a track uses its pitch, pan and effects.
+            match track.and_then(|i| song.tracks.get(i).map(|t| (i, t))) {
+                Some((i, t)) => self.trigger(sample, Some(i), gain, t.pitch + t.fx.fine / 100.0, t.pan, t.fx.reverse, None),
+                None => self.trigger(sample, None, gain, 0.0, 0.0, false, None),
+            }
+        }
         let playing = shared.playing.load(Ordering::Relaxed);
         if playing && !self.was_playing {
+            self.clock = 0.0;
             self.next_step = 0;
             self.until_next = 0.0;
             self.active = song.current;
@@ -189,6 +401,7 @@ impl Engine {
         self.was_playing = playing;
 
         let master = song.master;
+        let step_len = self.step_len(song.bpm);
         let delay_len = ((song.delay_steps as f64 * self.step_len(song.bpm)) as usize).clamp(1, self.delay.len() - 1);
         let feedback = song.feedback;
         let target_cutoff = song.cutoff;
@@ -200,10 +413,17 @@ impl Engine {
                     self.step(&song);
                 }
                 self.until_next -= 1.0;
+                self.clock += 1.0;
             }
             let (mut l, mut r, mut send_l, mut send_r) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            self.bus = [[0.0; 2]; MAX_TRACKS];
             for v in self.voices.iter_mut() {
                 let data = &self.samples[v.sample].data;
+                if v.pos < 0.0 {
+                    v.gain_l = 0.0;
+                    v.gain_r = 0.0;
+                    continue;
+                }
                 let i = v.pos as usize;
                 if i + 1 >= data.len() {
                     v.gain_l = 0.0;
@@ -222,12 +442,34 @@ impl Engine {
                     *f -= 1.0 / FADE_FRAMES;
                     s *= f.max(0.0);
                 }
-                l += s * v.gain_l;
-                r += s * v.gain_r;
-                send_l += s * v.gain_l * v.send;
-                send_r += s * v.gain_r * v.send;
+                match v.track {
+                    Some(t) if t < MAX_TRACKS => {
+                        self.bus[t][0] += s * v.gain_l;
+                        self.bus[t][1] += s * v.gain_r;
+                    }
+                    _ => {
+                        l += s * v.gain_l;
+                        r += s * v.gain_r;
+                    }
+                }
                 v.pos += v.rate;
             }
+            // Each track through its own effects; the sends are taken after them.
+            let (mut rev_l, mut rev_r) = (0.0f32, 0.0f32);
+            for (i, t) in song.tracks.iter().enumerate().take(MAX_TRACKS) {
+                let cycle = step_len * t.fx.chop_steps.max(1) as f64 * 2.0;
+                let beat = ((self.clock / cycle).fract()) as f32;
+                let [tl, tr] = self.fx[i].process(&t.fx, self.bus[i], self.out_rate as f32, beat);
+                l += tl;
+                r += tr;
+                send_l += tl * t.send;
+                send_r += tr * t.send;
+                rev_l += tl * t.fx.reverb;
+                rev_r += tr * t.fx.reverb;
+            }
+            let [wl, wr] = self.reverb.process([rev_l, rev_r]);
+            l += wl;
+            r += wr;
             self.voices.retain(|v| (v.gain_l > 0.0 || v.gain_r > 0.0) && v.fade.is_none_or(|f| f > 0.0));
 
             // Tempo synced ping-pong delay.
@@ -451,5 +693,69 @@ impl Recorder {
         self.stream = None;
         self.level.store(0, Ordering::Relaxed);
         (std::mem::take(&mut *self.buf.lock().unwrap()), self.rate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pattern::FilterKind;
+
+    fn render(song: Song, seconds: f32) -> Vec<f32> {
+        let samples = crate::samples::load_all();
+        let shared = Arc::new(Shared::new(song));
+        shared.playing.store(true, Ordering::Relaxed);
+        let mut engine = Engine::new(samples, shared, 44_100);
+        let mut out = vec![0.0; (44_100.0 * seconds) as usize * 2];
+        for chunk in out.chunks_mut(1024) {
+            engine.render(chunk);
+        }
+        out
+    }
+
+    fn peak(x: &[f32]) -> f32 {
+        x.iter().fold(0.0, |m, s| m.max(s.abs()))
+    }
+
+    #[test]
+    fn every_effect_at_once_stays_finite_and_audible() {
+        let samples = crate::samples::load_all();
+        let mut song = Song::rave(&samples);
+        for (i, t) in song.tracks.iter_mut().enumerate() {
+            let fx = &mut t.fx;
+            fx.filter = [FilterKind::Low, FilterKind::High, FilterKind::Band][i % 3];
+            fx.cutoff = 0.9;
+            fx.resonance = 1.0;
+            fx.drive = 1.0;
+            fx.distort = 1.0;
+            fx.crush = 1.0;
+            fx.downsample = 1.0;
+            fx.ring = 1.0;
+            fx.chop = 1.0;
+            fx.reverb = 1.0;
+            fx.reverse = i % 2 == 0;
+            fx.fine = 50.0;
+            fx.eq_low = 12.0;
+            fx.eq_mid = -12.0;
+            fx.eq_high = 12.0;
+            t.send = 1.0;
+        }
+        let out = render(song, 4.0);
+        assert!(out.iter().all(|s| s.is_finite()));
+        assert!(peak(&out) > 0.05, "silent: {}", peak(&out));
+    }
+
+    #[test]
+    fn a_filter_takes_out_the_highs() {
+        let samples = crate::samples::load_all();
+        let dry = Song::rave(&samples);
+        let mut wet = dry.clone();
+        for t in &mut wet.tracks {
+            t.fx.filter = FilterKind::Low;
+            t.fx.cutoff = 0.2;
+        }
+        // Sum of absolute differences between neighbours: a rough measure of high frequencies.
+        let roughness = |x: &[f32]| x.chunks(2).map(|f| f[0]).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f32>();
+        assert!(roughness(&render(wet, 2.0)) < roughness(&render(dry, 2.0)) * 0.5);
     }
 }

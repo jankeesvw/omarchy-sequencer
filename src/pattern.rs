@@ -78,6 +78,109 @@ impl Lane {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum FilterKind {
+    #[default]
+    Off,
+    Low,
+    High,
+    Band,
+}
+
+/// Effects on one track, applied to everything the track plays before it goes to the mix.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Fx {
+    pub filter: FilterKind,
+    /// 0..1, mapped exponentially from 40 Hz to 18 kHz.
+    pub cutoff: f32,
+    pub resonance: f32,
+    /// Saturation, 0 = clean.
+    pub drive: f32,
+    /// Bit reduction, 0 = off, 1 = 2 bits.
+    pub crush: f32,
+    /// Sample rate reduction, 0 = off.
+    pub downsample: f32,
+    /// Hard clipping distortion, 0 = off.
+    pub distort: f32,
+    /// Fine tuning in cents, on top of the track pitch.
+    pub fine: f32,
+    /// Play the sample backwards.
+    pub reverse: bool,
+    /// Ring modulator mix and frequency (0..1, mapped from 30 Hz to 2 kHz).
+    pub ring: f32,
+    pub ring_freq: f32,
+    /// Tempo synced gate: depth and length of one on/off cycle in steps.
+    pub chop: f32,
+    pub chop_steps: u8,
+    /// Send to the reverb.
+    pub reverb: f32,
+    /// Three band EQ in dB: low shelf (100 Hz), mid peak (1 kHz), high shelf (8 kHz).
+    pub eq_low: f32,
+    pub eq_mid: f32,
+    pub eq_high: f32,
+}
+
+impl Default for Fx {
+    fn default() -> Self {
+        Self {
+            filter: FilterKind::Off,
+            cutoff: 0.6,
+            resonance: 0.2,
+            drive: 0.0,
+            crush: 0.0,
+            downsample: 0.0,
+            distort: 0.0,
+            fine: 0.0,
+            reverse: false,
+            ring: 0.0,
+            ring_freq: 0.4,
+            chop: 0.0,
+            chop_steps: 1,
+            reverb: 0.0,
+            eq_low: 0.0,
+            eq_mid: 0.0,
+            eq_high: 0.0,
+        }
+    }
+}
+
+impl Fx {
+    pub fn active(&self) -> bool {
+        self.filter != FilterKind::Off
+            || self.drive > 0.0
+            || self.crush > 0.0
+            || self.downsample > 0.0
+            || self.distort > 0.0
+            || self.fine != 0.0
+            || self.reverse
+            || self.ring > 0.0
+            || self.chop > 0.0
+            || self.reverb > 0.0
+            || self.eq_low != 0.0
+            || self.eq_mid != 0.0
+            || self.eq_high != 0.0
+    }
+
+    fn sanitize(&mut self) {
+        self.cutoff = self.cutoff.clamp(0.0, 1.0);
+        self.resonance = self.resonance.clamp(0.0, 1.0);
+        self.drive = self.drive.clamp(0.0, 1.0);
+        self.crush = self.crush.clamp(0.0, 1.0);
+        self.downsample = self.downsample.clamp(0.0, 1.0);
+        self.distort = self.distort.clamp(0.0, 1.0);
+        self.fine = self.fine.clamp(-100.0, 100.0);
+        self.ring = self.ring.clamp(0.0, 1.0);
+        self.ring_freq = self.ring_freq.clamp(0.0, 1.0);
+        self.chop = self.chop.clamp(0.0, 1.0);
+        self.chop_steps = self.chop_steps.clamp(1, 8);
+        self.reverb = self.reverb.clamp(0.0, 1.0);
+        self.eq_low = self.eq_low.clamp(-12.0, 12.0);
+        self.eq_mid = self.eq_mid.clamp(-12.0, 12.0);
+        self.eq_high = self.eq_high.clamp(-12.0, 12.0);
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub sample: usize,
@@ -91,6 +194,8 @@ pub struct Track {
     pub pan: f32,
     /// How much of this track goes to the delay.
     pub send: f32,
+    #[serde(default)]
+    pub fx: Fx,
     pub mute: bool,
     pub solo: bool,
 }
@@ -105,6 +210,7 @@ impl Track {
             pitch: 0.0,
             pan: 0.0,
             send: 0.0,
+            fx: Fx::default(),
             mute: false,
             solo: false,
         }
@@ -262,6 +368,7 @@ pub fn load(samples: &[Arc<Sample>]) -> Option<Song> {
         t.pan = t.pan.clamp(-1.0, 1.0);
         t.send = t.send.clamp(0.0, 1.0);
         t.note_len = t.note_len.clamp(1, 16);
+        t.fx.sanitize();
     }
     song.steps.resize(PATTERNS, 16);
     for s in &mut song.steps {

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::audio::{self, Output, Recorder, Shared};
-use crate::pattern::{self, Cell, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
+use crate::pattern::{self, Cell, FilterKind, Fx, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
 use crate::samples::{self, Kind, Sample};
 use crate::theme::{self, Theme};
 
@@ -66,6 +66,8 @@ pub struct App {
     rec_track: Option<usize>,
     export_result: Arc<Mutex<Option<String>>>,
     tab: Option<bool>,
+    /// The track whose effects window is open, and where it opens.
+    fx_open: Option<(usize, Pos2)>,
 }
 
 impl App {
@@ -98,6 +100,7 @@ impl App {
             rec_track: None,
             export_result: Arc::new(Mutex::new(None)),
             tab: None,
+            fx_open: None,
         }
     }
 
@@ -258,7 +261,7 @@ impl App {
                     t.note_len = 1;
                     t.pitch = 0.0;
                 }
-                self.shared.preview.lock().unwrap().push((idx, 0.8));
+                self.shared.preview.lock().unwrap().push((idx, 0.8, Some(track)));
                 self.say(format!("recorded {name} (saved in ~/.local/share/sequencer/samples)"));
             }
             Err(e) => self.say(format!("recording not saved: {e}")),
@@ -721,7 +724,7 @@ impl App {
         if num_resp.clicked() {
             self.selected = ti;
             let t = &self.song.tracks[ti];
-            self.shared.preview.lock().unwrap().push((t.sample, t.volume));
+            self.shared.preview.lock().unwrap().push((t.sample, t.volume, Some(ti)));
         }
         if num_resp.secondary_clicked() {
             *move_up = Some(ti);
@@ -761,7 +764,7 @@ impl App {
             let t = &mut self.song.tracks[ti];
             t.sample = i;
             t.note_len = samples[i].default_len();
-            self.shared.preview.lock().unwrap().push((i, t.volume));
+            self.shared.preview.lock().unwrap().push((i, t.volume, Some(ti)));
         }
 
         // Mute, solo and record.
@@ -794,8 +797,23 @@ impl App {
         bar_control(ui, &th, vol, &mut t.volume, 0.0, 1.0, th.accent, ("vol", ti), "volume");
         let pan = next(40.0);
         bar_control(ui, &th, pan, &mut t.pan, -1.0, 1.0, th.cyan, ("pan", ti), "pan (double-click = center)");
-        let send = next(40.0);
-        bar_control(ui, &th, send, &mut t.send, 0.0, 1.0, th.magenta, ("send", ti), "delay send");
+        // Opens the effects window for this track; lit when any effect is on.
+        let fx_rect = next(40.0);
+        let active = t.fx.active() || t.send > 0.0;
+        let open = self.fx_open.is_some_and(|(o, _)| o == ti);
+        let fresp = ui.interact(fx_rect, ui.id().with(("fx", ti)), Sense::click()).on_hover_text("effects for this track");
+        let p = ui.painter();
+        let fill = if open { th.accent } else if fresp.hovered() { th.selection } else { th.bg_light };
+        p.rect_filled(fx_rect, CornerRadius::ZERO, fill);
+        let color = if open { th.bg } else if active { th.magenta } else { th.fg_dim };
+        p.text(fx_rect.center(), Align2::CENTER_CENTER, "FX", FontId::monospace(12.0), color);
+        if active && !open {
+            p.circle_filled(Pos2::new(fx_rect.right() - 6.0, fx_rect.top() + 6.0), 2.0, th.magenta);
+        }
+        if fresp.clicked() {
+            self.fx_open = if open { None } else { Some((ti, fx_rect.right_top() + Vec2::new(8.0, 0.0))) };
+        }
+        let t = &mut self.song.tracks[ti];
 
         // Pitch in semitones: drag vertically, double-click = 0.
         let pitch = next(34.0);
@@ -834,6 +852,135 @@ impl App {
         ui.painter().text(x_rect.center(), Align2::CENTER_CENTER, "×", FontId::monospace(15.0), if xr.hovered() { th.red } else { th.fg_dim });
         if xr.clicked() {
             *remove = Some(ti);
+        }
+    }
+
+    fn fx_window(&mut self, ctx: &egui::Context) {
+        let Some((ti, pos)) = self.fx_open else { return };
+        if ti >= self.song.tracks.len() {
+            self.fx_open = None;
+            return;
+        }
+        let th = self.theme.clone();
+        let name = self.samples[self.song.tracks[ti].sample].name.replace('_', " ");
+        let mut open = true;
+        let mut preview = false;
+        egui::Window::new(format!("FX · {} {name}", ti + 1))
+            .id(egui::Id::new("fx_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(pos)
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                let t = &mut self.song.tracks[ti];
+                ui.spacing_mut().slider_width = 150.0;
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                let hz = |v: f64, lo: f64, hi: f64| format!("{:.0} Hz", lo * (hi / lo).powf(v));
+
+                ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                section(ui, &th, "Pitch");
+                egui::Grid::new("fx_pitch").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Semitones");
+                    ui.add(egui::Slider::new(&mut t.pitch, -24.0..=24.0).step_by(1.0).suffix(" st"));
+                    ui.end_row();
+                    row_label(ui, &th, "Fine");
+                    ui.add(egui::Slider::new(&mut t.fx.fine, -100.0..=100.0).step_by(1.0).suffix(" ct"));
+                    ui.end_row();
+                    row_label(ui, &th, "Reverse");
+                    ui.checkbox(&mut t.fx.reverse, "play the sample backwards");
+                    ui.end_row();
+                });
+
+                section(ui, &th, "Filter");
+                egui::Grid::new("fx_filter").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Type");
+                    ui.horizontal(|ui| {
+                        for (kind, label) in [(FilterKind::Off, "Off"), (FilterKind::Low, "Low"), (FilterKind::High, "High"), (FilterKind::Band, "Band")] {
+                            ui.selectable_value(&mut t.fx.filter, kind, label);
+                        }
+                    });
+                    ui.end_row();
+                    row_label(ui, &th, "Cutoff");
+                    ui.add_enabled(
+                        t.fx.filter != FilterKind::Off,
+                        egui::Slider::new(&mut t.fx.cutoff, 0.0..=1.0).custom_formatter(move |v, _| hz(v, 40.0, 18_000.0)),
+                    );
+                    ui.end_row();
+                    row_label(ui, &th, "Resonance");
+                    ui.add_enabled(t.fx.filter != FilterKind::Off, amount(&mut t.fx.resonance));
+                    ui.end_row();
+                });
+
+                section(ui, &th, "EQ");
+                egui::Grid::new("fx_eq").num_columns(2).show(ui, |ui| {
+                    for (label, v) in [("Low", &mut t.fx.eq_low), ("Mid", &mut t.fx.eq_mid), ("High", &mut t.fx.eq_high)] {
+                        row_label(ui, &th, label);
+                        ui.add(egui::Slider::new(v, -12.0..=12.0).step_by(0.5).suffix(" dB"));
+                        ui.end_row();
+                    }
+                });
+
+                });
+                ui.add_space(24.0);
+                ui.vertical(|ui| {
+                section(ui, &th, "Color");
+                egui::Grid::new("fx_color").num_columns(2).show(ui, |ui| {
+                    for (label, v) in [("Drive", &mut t.fx.drive), ("Distortion", &mut t.fx.distort), ("Bitcrush", &mut t.fx.crush), ("Sample rate", &mut t.fx.downsample), ("Ring mod", &mut t.fx.ring)] {
+                        row_label(ui, &th, label);
+                        ui.add(amount(v));
+                        ui.end_row();
+                    }
+                    row_label(ui, &th, "Ring freq");
+                    ui.add_enabled(t.fx.ring > 0.0, egui::Slider::new(&mut t.fx.ring_freq, 0.0..=1.0).custom_formatter(move |v, _| hz(v, 30.0, 2000.0)));
+                    ui.end_row();
+                });
+
+                section(ui, &th, "Rhythm");
+                egui::Grid::new("fx_rhythm").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Chop");
+                    ui.add(amount(&mut t.fx.chop));
+                    ui.end_row();
+                    row_label(ui, &th, "Chop rate");
+                    ui.horizontal(|ui| {
+                        for (steps, label) in [(1u8, "1/16"), (2, "1/8"), (4, "1/4")] {
+                            ui.selectable_value(&mut t.fx.chop_steps, steps, label);
+                        }
+                    });
+                    ui.end_row();
+                });
+
+                section(ui, &th, "Sends");
+                egui::Grid::new("fx_sends").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Delay");
+                    ui.add(amount(&mut t.send));
+                    ui.end_row();
+                    row_label(ui, &th, "Reverb");
+                    ui.add(amount(&mut t.fx.reverb));
+                    ui.end_row();
+                });
+                });
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.add(egui::Button::new("▶  Preview").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                        preview = true;
+                    }
+                    if ui.add(egui::Button::new("Reset").min_size(Vec2::new(0.0, CONTROL_H))).on_hover_text("turn every effect off").clicked() {
+                        t.fx = Fx::default();
+                        t.send = 0.0;
+                        t.pitch = 0.0;
+                    }
+                });
+            });
+        if preview {
+            let t = &self.song.tracks[ti];
+            self.shared.preview.lock().unwrap().push((t.sample, t.volume, Some(ti)));
+        }
+        if !open {
+            self.fx_open = None;
         }
     }
 
@@ -924,6 +1071,8 @@ impl eframe::App for App {
                     }
                 });
             });
+
+        self.fx_window(&ctx);
 
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         self.history(pointer_down);
@@ -1082,4 +1231,21 @@ fn apply_theme(ctx: &egui::Context, th: &Theme) {
 
 fn section_gap(ui: &mut egui::Ui) {
     ui.add_space(18.0);
+}
+
+/// A 0..1 slider that shows its value as a percentage.
+fn amount(v: &mut f32) -> egui::Slider<'_> {
+    egui::Slider::new(v, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+}
+
+fn section(ui: &mut egui::Ui, th: &Theme, title: &str) {
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(title).color(th.accent).size(12.0));
+}
+
+fn row_label(ui: &mut egui::Ui, th: &Theme, text: &str) {
+    ui.allocate_ui_with_layout(Vec2::new(84.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_width(84.0);
+        ui.label(egui::RichText::new(text).color(th.fg_dim).size(12.0));
+    });
 }
