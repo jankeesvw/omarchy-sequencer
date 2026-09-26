@@ -55,6 +55,7 @@ fn main() -> eframe::Result {
     };
     let shared = Arc::new(audio::Shared::new(song.clone()));
     let output = audio::start(samples.clone(), shared.clone());
+    let about = args.iter().any(|a| a == "--about");
     if args.iter().any(|a| a == "--play") {
         shared.playing.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -75,6 +76,12 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Sequencer",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, samples, shared, name, song, output)))),
+        Box::new(move |cc| {
+            let mut app = ui::App::new(cc, samples, shared, name, song, output);
+            if about {
+                app.show_about();
+            }
+            Ok(Box::new(app))
+        }),
     )
 }

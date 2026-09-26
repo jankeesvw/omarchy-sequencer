@@ -41,6 +41,35 @@ const LEFT_W: f32 = {
 };
 /// Inset of a grid cell (and of every track control) inside its slot.
 const CELL_INSET: f32 = 1.5;
+const LOGO: &str = include_str!("logo.txt");
+
+const CREDITS: &[(&str, &str)] = &[
+    ("code and design", "Jankees van Woezik"),
+    ("TR-808 samples", "Michael Fischer"),
+    ("riffs and stabs", "Ben Burnes"),
+    ("rave stab", "Freesound #443931"),
+    ("JX-3P stab", "modularsamples"),
+    ("hoover", "Chameon"),
+    ("hardhouse hoover", "woowah"),
+    ("mentasm", "sandizzy"),
+    ("M1 organ", "Cloud-10"),
+    ("orchestra hit", "BigDumbWeirdo"),
+    ("acid line", "makenoisemusic"),
+    ("acid bass", "evanjones4"),
+    ("house chords", "Slanted"),
+    ("rave loops", "Alastair_Pursloe, GENERALMiDiGUy"),
+    ("vocals", "Producer Space"),
+    ("lo-fi kits, hand percussion", "Patrick Callan"),
+    ("bass pack", "Source Guy"),
+    ("body percussion", "Karoryfer Samples"),
+    ("retro game", "Juhani Junkala"),
+    ("found percussion", "Field Recording Working Group"),
+    ("built with", "Rust, egui and cpal"),
+    ("made for", "Omarchy"),
+    ("", ""),
+    ("thanks for", "making music"),
+];
+
 /// Size of a grid cell; the rows are as tall.
 const CELL: f32 = 30.0;
 /// How long the trigger animation of a cell lasts.
@@ -53,6 +82,7 @@ pub struct App {
     song_name: String,
     name_edit: String,
     songs_open: bool,
+    about_open: Option<Instant>,
     settings_open: bool,
     confirm_delete: Option<String>,
     shared: Arc<Shared>,
@@ -106,6 +136,7 @@ impl App {
             name_edit: song_name.clone(),
             song_name,
             songs_open: false,
+            about_open: None,
             settings_open: false,
             confirm_delete: None,
             shared,
@@ -143,6 +174,11 @@ impl App {
             fx_loop: None,
             fx_gap: 1.0,
         }
+    }
+
+    /// Opens the about box (used by `sequencer --about`).
+    pub fn show_about(&mut self) {
+        self.about_open = Some(Instant::now());
     }
 
     fn playing(&self) -> bool {
@@ -578,6 +614,10 @@ impl App {
                 }
                 if ui.add_enabled(!self.undo.is_empty(), button("↶")).on_hover_text("undo [Ctrl+Z]").clicked() {
                     self.undo(false);
+                }
+                section_gap(ui);
+                if ui.add(button("?")).on_hover_text("about Sequencer").clicked() {
+                    self.about_open = if self.about_open.is_some() { None } else { Some(Instant::now()) };
                 }
             });
         });
@@ -1351,6 +1391,111 @@ impl App {
         }
     }
 
+    /// An about box like software used to have: a big ASCII logo and credits that scroll by.
+    fn about_window(&mut self, ctx: &egui::Context) {
+        let Some(opened) = self.about_open else { return };
+        let th = self.theme.clone();
+        let mut open = true;
+        egui::Window::new("About")
+            .id(egui::Id::new("about_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(22)))
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                // The logo, each line a step further from the accent towards magenta.
+                let lines: Vec<&str> = LOGO.lines().collect();
+                // Drawn cell by cell instead of as text, so the blocks are solid and the shadow joins up.
+                let (cw, ch) = (7.0, 14.0);
+                let cols = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(cw * cols as f32, ch * lines.len() as f32), Sense::hover());
+                let t = opened.elapsed().as_secs_f32();
+                let p = ui.painter();
+                for (r, line) in lines.iter().enumerate() {
+                    for (c, glyph) in line.chars().enumerate() {
+                        let cell = Rect::from_min_size(rect.left_top() + Vec2::new(cw * c as f32, ch * r as f32), Vec2::new(cw, ch));
+                        // A colour wave running across the logo.
+                        let wave = ((t * 1.4 - c as f32 * 0.08 - r as f32 * 0.25).sin() * 0.5 + 0.5) * 0.5;
+                        let color = lerp_color(th.accent, th.magenta, (r as f32 / 5.0 * 0.6 + wave).min(1.0));
+                        let shadow = th.fg_dim;
+                        let (mx, my) = (cell.center().x, cell.center().y);
+                        let line = |a: Pos2, b: Pos2| {
+                            p.line_segment([a, b], Stroke::new(1.5, shadow));
+                        };
+                        match glyph {
+                            '█' => {
+                                p.rect_filled(cell, CornerRadius::ZERO, color);
+                            }
+                            '▄' => {
+                                p.rect_filled(cell.with_min_y(my), CornerRadius::ZERO, color);
+                            }
+                            '▀' => {
+                                p.rect_filled(cell.with_max_y(my), CornerRadius::ZERO, color);
+                            }
+                            '═' => line(Pos2::new(cell.left(), my), Pos2::new(cell.right(), my)),
+                            '║' => line(Pos2::new(mx, cell.top()), Pos2::new(mx, cell.bottom())),
+                            '╔' => {
+                                line(Pos2::new(mx, my), Pos2::new(cell.right(), my));
+                                line(Pos2::new(mx, my), Pos2::new(mx, cell.bottom()));
+                            }
+                            '╗' => {
+                                line(Pos2::new(cell.left(), my), Pos2::new(mx, my));
+                                line(Pos2::new(mx, my), Pos2::new(mx, cell.bottom()));
+                            }
+                            '╚' => {
+                                line(Pos2::new(mx, cell.top()), Pos2::new(mx, my));
+                                line(Pos2::new(mx, my), Pos2::new(cell.right(), my));
+                            }
+                            '╝' => {
+                                line(Pos2::new(mx, cell.top()), Pos2::new(mx, my));
+                                line(Pos2::new(cell.left(), my), Pos2::new(mx, my));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let width = rect.width();
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("version {}", env!("CARGO_PKG_VERSION"))).color(th.fg_dim).size(12.0));
+                    ui.label(egui::RichText::new("·").color(th.fg_dim).size(12.0));
+                    ui.label(egui::RichText::new("a step sequencer for Omarchy").color(th.fg).size(12.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("made by Jankees van Woezik ·").color(th.fg).size(12.0));
+                    let link = ui.add(egui::Label::new(egui::RichText::new("jankeesvw.com").color(th.accent).size(12.0).underline()).sense(Sense::click()));
+                    if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        let _ = std::process::Command::new("xdg-open").arg("https://jankeesvw.com").spawn();
+                    }
+                });
+                ui.add_space(10.0);
+                // Credits rolling by, the old-fashioned way.
+                let (area, _) = ui.allocate_exact_size(Vec2::new(width, 110.0), Sense::hover());
+                let p = ui.painter().with_clip_rect(area);
+                p.rect_filled(area, CornerRadius::ZERO, th.bg);
+                let line_h = 18.0;
+                let total = CREDITS.len() as f32 * line_h + area.height();
+                let offset = (t * 16.0) % total;
+                for (i, (role, who)) in CREDITS.iter().enumerate() {
+                    let y = area.bottom() - offset + i as f32 * line_h;
+                    if y < area.top() - line_h || y > area.bottom() {
+                        continue;
+                    }
+                    let fade = ((y - area.top()) / 24.0).min((area.bottom() - y) / 24.0).clamp(0.0, 1.0);
+                    let center = area.center().x;
+                    p.text(Pos2::new(center - 8.0, y), Align2::RIGHT_TOP, *role, FontId::monospace(11.0), th.fg_dim.gamma_multiply(fade));
+                    p.text(Pos2::new(center + 8.0, y), Align2::LEFT_TOP, *who, FontId::monospace(11.0), th.fg_bright.gamma_multiply(fade));
+                }
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("MIT licensed · every bundled sound is CC0 or public domain").color(th.fg_dim).size(10.0));
+            });
+        if !open {
+            self.about_open = None;
+        }
+    }
+
     fn songs_window(&mut self, ctx: &egui::Context) {
         if !self.songs_open {
             return;
@@ -1548,6 +1693,7 @@ impl eframe::App for App {
 
         self.fx_window(&ctx);
         self.songs_window(&ctx);
+        self.about_window(&ctx);
         self.finish_installs();
         self.sounds_window(&ctx);
         self.master_window(&ctx);
@@ -1568,7 +1714,7 @@ impl eframe::App for App {
         }
         // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
         // Input still triggers an immediate repaint.
-        let busy = self.playing() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
+        let busy = self.playing() || self.about_open.is_some() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
         ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 
@@ -1876,4 +2022,9 @@ fn pack_card(ui: &mut egui::Ui, th: &Theme, card: PackCard, time: f32) -> Option
     }
     ui.add_space(4.0);
     action
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }

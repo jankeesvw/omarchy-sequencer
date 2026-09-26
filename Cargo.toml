@@ -1,6 +1,6 @@
 [package]
 name = "sequencer"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "A step sequencer for Omarchy, with TR-808 drums, riffs, 90s rave samples and your own recordings"
 license = "MIT"
