@@ -327,6 +327,52 @@ impl Song {
         Self::empty(tracks, 135.0, 32)
     }
 
+    /// A laid-back 98 BPM groove with lots of room: kick, snare, offbeat hats, bass and a Rhodes chord.
+    pub fn late_night(samples: &[Arc<Sample>]) -> Self {
+        let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
+        let row = |name: &str, lanes: &[&[(usize, u8, bool)]], volume: f32, pan: f32, fx: Fx, send: f32| {
+            let sample = idx(name);
+            let mut t = Track::new(sample, samples[sample].default_len());
+            for (p, notes) in lanes.iter().enumerate() {
+                for &(s, len, accent) in notes.iter() {
+                    t.lanes[p].place(s, if accent { Cell::Accent } else { Cell::On }, len, 16);
+                }
+            }
+            t.volume = volume;
+            t.pan = pan;
+            t.fx = fx;
+            t.send = send;
+            t
+        };
+        let hats: &[(usize, u8, bool)] = &[(2, 1, false), (6, 1, false), (10, 1, false), (14, 1, false)];
+        let tracks = vec![
+            row("kick", &[&[(0, 1, true), (10, 1, false)], &[(0, 1, true), (10, 1, false)], &[]], 0.9, 0.0, Fx { eq_low: 3.0, ..Fx::default() }, 0.0),
+            row("snare", &[&[(4, 1, false), (12, 1, false)], &[(4, 1, false), (12, 1, false)], &[(12, 1, false)]], 0.6, 0.0, Fx { reverb: 0.3, ..Fx::default() }, 0.0),
+            row("hat_closed", &[hats, hats, hats], 0.35, 0.2, Fx { filter: FilterKind::High, cutoff: 0.45, ..Fx::default() }, 0.0),
+            row(
+                "bass_hit",
+                &[&[(0, 2, true), (10, 2, false)], &[(0, 2, true), (7, 1, false), (10, 2, false)], &[(0, 4, true)]],
+                0.7,
+                0.0,
+                Fx { drive: 0.15, ..Fx::default() },
+                0.0,
+            ),
+            row(
+                "rhodes_chord",
+                &[&[(2, 8, false)], &[(2, 8, false)], &[(2, 12, false)]],
+                0.45,
+                -0.1,
+                Fx { filter: FilterKind::Low, cutoff: 0.7, resonance: 0.2, reverb: 0.4, delay_steps: 3, feedback: 0.4, ..Fx::default() },
+                0.3,
+            ),
+            row("plucks", &[&[], &[(8, 4, false)], &[(8, 4, false)]], 0.3, 0.35, Fx { reverb: 0.35, delay_steps: 6, feedback: 0.45, ..Fx::default() }, 0.45),
+        ];
+        let mut song = Self::empty(tracks, 98.0, 16);
+        song.swing = 0.14;
+        song.tracks[3].pitch = -2.0;
+        song
+    }
+
     /// An empty song to start from: a few drum tracks and nothing on the grid.
     pub fn blank(samples: &[Arc<Sample>]) -> Self {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);

@@ -74,7 +74,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license: "CC0",
         url: "https://github.com/sfzinstruments/body_percussion",
         about: "Claps, snaps, chest and belly slaps, stomps",
-        size: "61 MB download",
+        size: "61 MB",
         source: Source::Zip("https://github.com/sfzinstruments/body_percussion/archive/refs/heads/main.zip", Take::OnePerSound),
     },
     CatalogEntry {

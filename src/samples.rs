@@ -113,11 +113,57 @@ pub fn load_pack(pack: &str, dir: &Path) -> Vec<Sample> {
     paths
         .iter()
         .filter_map(|path| {
-            let name = path.file_stem()?.to_string_lossy().to_lowercase().replace(' ', "_");
+            let stem = path.file_stem()?.to_string_lossy().to_lowercase().replace(' ', "_");
             let file = std::fs::File::open(path).ok()?;
-            decode(&name, guess_kind(&name), pack, std::io::BufReader::new(file))
+            let mut sample = decode(&stem, guess_kind(&stem), pack, std::io::BufReader::new(file))?;
+            // The id keeps the file name (songs refer to it); the name is for people.
+            sample.name = display_name(&stem);
+            Some(sample)
         })
         .collect()
+}
+
+/// Tidies a file name from a pack for the browser: "SourceGuy - Funny 808 1" becomes "funny 808 1",
+/// "bellycenter_l_vl2_rr1" becomes "bellycenter L" and "sfx_wpn_laser10" becomes "wpn laser 10".
+pub fn display_name(stem: &str) -> String {
+    let mut name = stem.to_lowercase().replace('-', " - ");
+    // Drop a maker's name in front ("SourceGuy - …").
+    if let Some((_, rest)) = name.rsplit_once(" - ") {
+        name = rest.to_owned();
+    }
+    let mut words: Vec<String> = name.split(['_', ' ']).filter(|w| !w.is_empty()).map(str::to_owned).collect();
+    // Recording details at the end: velocity layer and round robin.
+    while words.last().is_some_and(|w| is_take(w)) {
+        words.pop();
+    }
+    if words.first().is_some_and(|w| w == "sfx") && words.len() > 1 {
+        words.remove(0);
+    }
+    let words: Vec<String> = words
+        .into_iter()
+        .map(|w| match w.as_str() {
+            "l" => "L".into(),
+            "r" => "R".into(),
+            _ => split_number(&w),
+        })
+        .collect();
+    let name = words.join(" ");
+    if name.is_empty() { stem.to_owned() } else { name }
+}
+
+/// "vl2", "rr1": which recording of a multisampled sound it is.
+fn is_take(w: &str) -> bool {
+    ["vl", "rr"].iter().any(|p| w.strip_prefix(p).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())))
+}
+
+/// "laser10" becomes "laser 10", "808" stays "808".
+fn split_number(w: &str) -> String {
+    let digits = w.len() - w.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    if digits == 0 || digits == w.len() {
+        return w.to_owned();
+    }
+    let (word, number) = w.split_at(w.len() - digits);
+    format!("{word} {number}")
 }
 
 /// Sort key that puts "laser2" before "laser10": runs of digits compare as numbers.
@@ -226,6 +272,15 @@ pub fn save_recording(raw: &[f32], rate: u32) -> Result<Sample, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tidies_pack_names() {
+        assert_eq!(display_name("sourceguy_-_funny_808_1"), "funny 808 1");
+        assert_eq!(display_name("bellycenter_l_vl2_rr1"), "bellycenter L");
+        assert_eq!(display_name("sfx_wpn_laser10"), "wpn laser 10");
+        assert_eq!(display_name("cajon_kick_1"), "cajon kick 1");
+        assert_eq!(display_name("snap_r_rr1"), "snap R");
+    }
 
     #[test]
     fn sorts_numbers_naturally() {

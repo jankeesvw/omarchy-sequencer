@@ -14,15 +14,39 @@ fn main() -> eframe::Result {
     let samples = samples::load_all();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("Usage: sequencer [--play] [--preset demo|rave]");
+        println!("Usage: sequencer [--play] [--preset demo|rave|late-night]");
         println!("  --play           start playing right away");
         println!("  --preset <name>  start a new song from a preset");
+        println!("  --install-pack <pack>  download a sound pack (run without a name to list them)");
+        return Ok(());
+    }
+    if let Some(i) = args.iter().position(|a| a == "--install-pack") {
+        let Some(entry) = args.get(i + 1).and_then(|id| packs::CATALOG.iter().find(|e| e.id == id)) else {
+            eprintln!("Usage: sequencer --install-pack <pack>. Packs:");
+            for e in packs::CATALOG {
+                eprintln!("  {:18} {} ({}, {})", e.id, e.name, e.license, e.size);
+            }
+            std::process::exit(2);
+        };
+        println!("Installing {}…", entry.name);
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        match packs::install(entry, &progress) {
+            Ok(()) => println!("Installed {} in {}", entry.name, packs::dir().join(entry.id).display()),
+            Err(e) => {
+                eprintln!("Installing {} failed: {e}", entry.name);
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
     let preset = args.iter().position(|a| a == "--preset").and_then(|i| args.get(i + 1));
     let (name, song) = match preset.map(String::as_str) {
         Some(preset) => {
-            let (base, song) = if preset == "rave" { ("Rave", pattern::Song::rave(&samples)) } else { ("Demo", pattern::Song::demo(&samples)) };
+            let (base, song) = match preset {
+                "rave" => ("Rave", pattern::Song::rave(&samples)),
+                "late" | "late-night" => ("Late Night", pattern::Song::late_night(&samples)),
+                _ => ("Demo", pattern::Song::demo(&samples)),
+            };
             let name = songs::unique(base);
             let _ = songs::write(&name, &song, &samples);
             (name, song)

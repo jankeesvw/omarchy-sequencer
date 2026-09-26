@@ -1248,7 +1248,8 @@ impl App {
                                 group = g;
                             }
                             let on = self.sounds_query.is_empty() && &self.sounds_source == key;
-                            if list_row(ui, &th, name, on).clicked() {
+                            let count = self.samples.iter().filter(|s| &source_of(s) == key).count();
+                            if list_row_count(ui, &th, name, count, on).clicked() {
                                 self.sounds_source = key.clone();
                                 self.sounds_query.clear();
                             }
@@ -1268,25 +1269,35 @@ impl App {
                             ui.set_width(372.0);
                             if self.sounds_query.is_empty() && self.sounds_source == "get" {
                                 let busy: Vec<(String, String)> = self.installing.lock().unwrap().iter().map(|(i, p)| (i.clone(), p.lock().unwrap().clone())).collect();
-                                for entry in packs::CATALOG {
+                                ui.label(egui::RichText::new("Sound packs").color(th.fg_bright).size(15.0));
+                                ui.label(egui::RichText::new("Free libraries to use in anything you make, CC0 or public domain. One click and they are in the browser.").color(th.fg_dim).size(11.0));
+                                ui.add_space(6.0);
+                                let tiles = [th.accent, th.magenta, th.green, th.yellow, th.cyan, th.orange];
+                                for (n, entry) in packs::CATALOG.iter().enumerate() {
                                     let is_installed = installed_packs.iter().any(|(i, _)| i.id == entry.id);
                                     let progress = busy.iter().find(|(i, _)| i == entry.id).map(|(_, p)| p.clone());
-                                    match pack_row(ui, &th, entry, is_installed, progress, self.confirm_remove.as_deref() == Some(entry.id)) {
+                                    let sounds = self.samples.iter().filter(|s| s.pack == entry.id).count();
+                                    let card = PackCard { entry, tile: tiles[n % tiles.len()], installed: is_installed, sounds, progress, asking: self.confirm_remove.as_deref() == Some(entry.id) };
+                                    match pack_card(ui, &th, card, self.started.elapsed().as_secs_f32()) {
                                         Some(PackAction::Install) => install = Some(entry.id),
+                                        Some(PackAction::Open) => {
+                                            self.sounds_source = entry.id.into();
+                                            self.confirm_remove = None;
+                                        }
                                         Some(PackAction::AskRemove) => self.confirm_remove = Some(entry.id.into()),
                                         Some(PackAction::Remove) => remove = Some(entry.id),
                                         None => {}
                                     }
                                 }
                                 ui.add_space(4.0);
-                                ui.label(egui::RichText::new("Free sound libraries (CC0 or public domain). They go in ~/.local/share/sequencer/packs.").color(th.fg_dim).size(11.0));
+                                ui.label(egui::RichText::new("Packs are saved in ~/.local/share/sequencer/packs").color(th.fg_dim).size(10.0));
                                 return;
                             }
-                            let query = self.sounds_query.to_lowercase().replace(' ', "_");
+                            let query = self.sounds_query.to_lowercase();
                             let visible = |s: &Sample| {
                                 if !query.is_empty() {
                                     let hidden = !matches!(s.pack.as_str(), "classic" | "user") && !installed_packs.iter().any(|(i, _)| i.id == s.pack);
-                                    return !hidden && s.name.contains(&query);
+                                    return !hidden && (s.name.replace('_', " ").contains(&query) || s.id.replace('_', " ").contains(&query));
                                 }
                                 source_of(s) == self.sounds_source
                             };
@@ -1368,6 +1379,9 @@ impl App {
                     if ui.add(egui::Button::new("Rave").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
                         action = Some(("rave", "Rave".into()));
                     }
+                    if ui.add(egui::Button::new("Late Night").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                        action = Some(("late", "Late Night".into()));
+                    }
                 });
                 ui.add_space(6.0);
                 section(ui, &th, "Your songs");
@@ -1417,6 +1431,10 @@ impl App {
             }
             Some(("rave", base)) => {
                 self.new_song(&base, Song::rave(&self.samples));
+                self.songs_open = false;
+            }
+            Some(("late", base)) => {
+                self.new_song(&base, Song::late_night(&self.samples));
                 self.songs_open = false;
             }
             Some(("open", name)) => {
@@ -1753,6 +1771,13 @@ fn list_row(ui: &mut egui::Ui, th: &Theme, text: &str, on: bool) -> egui::Respon
     resp
 }
 
+fn list_row_count(ui: &mut egui::Ui, th: &Theme, text: &str, count: usize, on: bool) -> egui::Response {
+    let resp = list_row(ui, th, text, on);
+    let color = if on { th.on(th.accent) } else { th.fg_dim };
+    ui.painter().text(resp.rect.right_center() - Vec2::new(10.0, 0.0), Align2::RIGHT_CENTER, count.to_string(), FontId::monospace(10.0), color);
+    resp
+}
+
 fn sound_row(ui: &mut egui::Ui, th: &Theme, name: &str, pack: Option<&str>, color: Color32, current: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
     let p = ui.painter();
@@ -1769,48 +1794,86 @@ fn sound_row(ui: &mut egui::Ui, th: &Theme, name: &str, pack: Option<&str>, colo
 
 enum PackAction {
     Install,
+    Open,
     AskRemove,
     Remove,
 }
 
-fn pack_row(ui: &mut egui::Ui, th: &Theme, entry: &packs::CatalogEntry, installed: bool, progress: Option<String>, asking: bool) -> Option<PackAction> {
-    // Name, then who made it and the licence, then what is in it; the text wraps before the button.
-    let wrap = ui.available_width() - 110.0;
-    let meta = ui.painter().layout(format!("{} · {} · {}", entry.author, entry.license, entry.size), FontId::monospace(10.0), th.fg_dim, wrap);
-    let about = ui.painter().layout(entry.about.to_owned(), FontId::monospace(10.0), th.fg, wrap);
-    let height = 30.0 + meta.size().y + 4.0 + about.size().y + 10.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+struct PackCard<'a> {
+    entry: &'a packs::CatalogEntry,
+    tile: Color32,
+    installed: bool,
+    sounds: usize,
+    progress: Option<String>,
+    asking: bool,
+}
+
+/// One pack in the store: a coloured monogram, what it is, who made it, and Get / Open.
+fn pack_card(ui: &mut egui::Ui, th: &Theme, card: PackCard, time: f32) -> Option<PackAction> {
+    let entry = card.entry;
+    let text_x = 62.0;
+    let wrap = ui.available_width() - text_x - 104.0;
+    let meta = ui.painter().layout(format!("{} · {}", entry.author, entry.license), FontId::monospace(10.0), th.fg_dim, wrap);
+    let about = ui.painter().layout(entry.about.to_owned(), FontId::monospace(11.0), th.fg, wrap);
+    let height = (12.0 + 18.0 + meta.size().y + 6.0 + about.size().y + 12.0).max(72.0);
+    let (rect, hover) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::ZERO, th.bg_light);
-    p.text(rect.left_top() + Vec2::new(10.0, 9.0), Align2::LEFT_TOP, entry.name, FontId::monospace(13.0), th.fg_bright);
-    let about_y = 30.0 + meta.size().y + 4.0;
-    p.galley(rect.left_top() + Vec2::new(10.0, 30.0), meta, th.fg_dim);
-    p.galley(rect.left_top() + Vec2::new(10.0, about_y), about, th.fg);
-    let button = Rect::from_center_size(Pos2::new(rect.right() - 46.0, rect.center().y), Vec2::new(76.0, CONTROL_H));
+    p.rect_filled(rect, CornerRadius::ZERO, if hover.hovered() { th.selection } else { th.bg_light });
+    // Monogram tile.
+    let tile = Rect::from_min_size(rect.left_top() + Vec2::new(12.0, 12.0), Vec2::splat(38.0));
+    p.rect_filled(tile, CornerRadius::ZERO, card.tile);
+    let letters: String = entry.name.split(' ').filter_map(|w| w.chars().next()).take(2).collect();
+    p.text(tile.center(), Align2::CENTER_CENTER, letters, FontId::monospace(14.0), th.on(card.tile));
+    // Name, maker and licence, contents.
+    p.text(rect.left_top() + Vec2::new(text_x, 11.0), Align2::LEFT_TOP, entry.name, FontId::monospace(14.0), th.fg_bright);
+    let meta_y = 11.0 + 18.0;
+    let about_y = meta_y + meta.size().y + 6.0;
+    p.galley(rect.left_top() + Vec2::new(text_x, meta_y), meta, th.fg_dim);
+    p.galley(rect.left_top() + Vec2::new(text_x, about_y), about, th.fg);
+
+    let button = Rect::from_min_size(Pos2::new(rect.right() - 96.0, rect.top() + 12.0), Vec2::new(84.0, CONTROL_H));
     let mut action = None;
-    if let Some(progress) = progress {
-        ui.painter().text(button.center(), Align2::CENTER_CENTER, progress, FontId::monospace(10.0), th.accent);
-    } else {
-        let resp = ui.interact(button, ui.id().with(("pack", entry.id)), Sense::click());
-        let (label, fill, text) = match (installed, asking) {
-            (false, _) => ("Get", if resp.hovered() { th.selection } else { th.accent }, None),
-            (true, false) => ("Remove", if resp.hovered() { th.selection } else { th.bg_dark }, Some(th.fg_dim)),
-            (true, true) => ("Sure?", th.red, None),
+    if let Some(progress) = card.progress {
+        // A bar along the bottom of the card: a fraction when we know it, a sweep while we don't.
+        let bar = Rect::from_min_size(Pos2::new(rect.left(), rect.bottom() - 3.0), Vec2::new(rect.width(), 3.0));
+        p.rect_filled(bar, CornerRadius::ZERO, th.bg_dark);
+        let fraction = progress.split_once('/').and_then(|(a, b)| Some(a.trim().parse::<f32>().ok()? / b.split_whitespace().next()?.parse::<f32>().ok()?));
+        let fill = match fraction {
+            Some(f) => Rect::from_min_size(bar.min, Vec2::new(bar.width() * f.clamp(0.0, 1.0), bar.height())),
+            None => {
+                let x = bar.left() + (time * 0.8).fract() * (bar.width() + 80.0) - 80.0;
+                Rect::from_x_y_ranges(x.max(bar.left())..=(x + 80.0).min(bar.right()), bar.y_range())
+            }
         };
+        p.rect_filled(fill, CornerRadius::ZERO, card.tile);
+        p.text(button.center(), Align2::CENTER_CENTER, progress, FontId::monospace(10.0), th.fg);
+    } else if card.installed {
+        let resp = ui.interact(button, ui.id().with(("open", entry.id)), Sense::click());
+        let p = ui.painter();
+        p.rect_filled(button, CornerRadius::ZERO, if resp.hovered() { th.accent } else { th.bg_dark });
+        p.text(button.center(), Align2::CENTER_CENTER, "Open", FontId::monospace(12.0), if resp.hovered() { th.on(th.accent) } else { th.fg_bright });
+        if resp.clicked() {
+            action = Some(PackAction::Open);
+        }
+        p.text(Pos2::new(button.center().x, button.bottom() + 12.0), Align2::CENTER_CENTER, format!("✓ {} sounds", card.sounds), FontId::monospace(10.0), th.green);
+        let remove = Rect::from_center_size(Pos2::new(button.center().x, button.bottom() + 30.0), Vec2::new(84.0, 16.0));
+        let rresp = ui.interact(remove, ui.id().with(("remove", entry.id)), Sense::click());
+        let (label, color) = if card.asking { ("sure? remove", th.red) } else { ("remove", if rresp.hovered() { th.red } else { th.fg_dim }) };
+        ui.painter().text(remove.center(), Align2::CENTER_CENTER, label, FontId::monospace(10.0), color);
+        if rresp.clicked() {
+            action = Some(if card.asking { PackAction::Remove } else { PackAction::AskRemove });
+        }
+    } else {
+        let resp = ui.interact(button, ui.id().with(("get", entry.id)), Sense::click());
+        let fill = if resp.hovered() { th.fg_bright } else { th.accent };
         let p = ui.painter();
         p.rect_filled(button, CornerRadius::ZERO, fill);
-        p.text(button.center(), Align2::CENTER_CENTER, label, FontId::monospace(11.0), text.unwrap_or_else(|| th.on(fill)));
+        p.text(button.center(), Align2::CENTER_CENTER, "Get", FontId::monospace(12.0), th.on(fill));
+        p.text(Pos2::new(button.center().x, button.bottom() + 12.0), Align2::CENTER_CENTER, entry.size, FontId::monospace(10.0), th.fg_dim);
         if resp.clicked() {
-            action = Some(match (installed, asking) {
-                (false, _) => PackAction::Install,
-                (true, false) => PackAction::AskRemove,
-                (true, true) => PackAction::Remove,
-            });
-        }
-        if installed && !asking {
-            ui.painter().text(Pos2::new(button.left() - 10.0, button.center().y), Align2::RIGHT_CENTER, "✓", FontId::monospace(13.0), th.green);
+            action = Some(PackAction::Install);
         }
     }
-    ui.add_space(3.0);
+    ui.add_space(4.0);
     action
 }
