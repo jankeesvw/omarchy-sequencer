@@ -1,0 +1,27 @@
+# CYBERSEQ//2000
+
+Een step sequencer voor Omarchy in 90s cyber-stijl: neon op zwart, scanlines, oscilloscoop, Win95-bevels. Geschreven in Rust met egui (UI) en cpal (audio via ALSA/PipeWire).
+
+## Installeren
+
+```bash
+./install.sh
+```
+
+Dit bouwt een release, zet de binary in `~/.local/bin/sequencer` en installeert een `.desktop`-bestand en icoon, zodat hij in de Omarchy launcher staat (Super + Space → "CyberSeq"). Met `sequencer --play` start hij direct met afspelen.
+
+## Bediening
+
+- Links klikken of slepen over het grid: stappen aan/uit tekenen. Rechtsklik: accent (magenta, harder).
+- GRID: aantal stappen van 1 tot 64 (`-`/`+`, slepen, of de knoppen 8/12/16/24/32/64). Tracks toevoegen met `+ TRACK` (max 16), verwijderen met `×`.
+- Per track: sample kiezen (dropdown, speelt meteen af), mute, solo, volume (slepen of scrollen), pitch in halve tonen (verticaal slepen, dubbelklik = 0). Klik op het tracknummer om te previewen, rechtsklik schuift de track omhoog.
+- Toetsen: `Space` play/stop, `←`/`→` grid kleiner/groter, `↑`/`↓` BPM, `R` random patroon, `C` wissen, `T` track erbij, `Ctrl+S` opslaan.
+- Het patroon wordt automatisch bewaard in `~/.config/sequencer/pattern.json`.
+- Eigen samples: zet `.wav` bestanden in `~/.local/share/sequencer/samples`; ze verschijnen onder USER SAMPLES.
+
+## Samples
+
+Alle meegeleverde samples zijn CC0 (public domain), omgezet naar 44.1 kHz mono en in de binary ingebakken.
+
+- Drums: Roland TR-808 Sound Sample Set van Michael Fischer (1994), via [tidalcycles/sounds-tr808-fischer](https://github.com/tidalcycles/sounds-tr808-fischer), CC0 1.0.
+- Riffs en stabs: "2HTC Samples Vol 4 Addendum" van Ben Burnes (Abstraction Music), via [lavenderdotpet/CC0-Public-Domain-Sounds](https://github.com/lavenderdotpet/CC0-Public-Domain-Sounds), CC0.

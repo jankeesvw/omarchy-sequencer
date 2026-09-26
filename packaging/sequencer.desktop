@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=CyberSeq 2000
+GenericName=Step Sequencer
+Comment=90s cyber drum & riff step sequencer
+Exec=sequencer
+Icon=sequencer
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=drum;beat;sequencer;808;music;
+StartupWMClass=sequencer
