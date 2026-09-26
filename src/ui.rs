@@ -465,7 +465,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let playing = self.playing();
-            let play = egui::Button::new(egui::RichText::new(if playing { "■  Stop" } else { "▶  Play" }).color(th.bg).strong())
+            let play = egui::Button::new(egui::RichText::new(if playing { "■  Stop" } else { "▶  Play" }).color(th.on(if playing { th.red } else { th.accent })).strong())
                 .fill(if playing { th.red } else { th.accent })
                 .min_size(Vec2::new(96.0, CONTROL_H));
             if ui.add(play).on_hover_text("[Space]").clicked() {
@@ -495,7 +495,7 @@ impl App {
                 if self.playing() && active == p && !current {
                     painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, th.fg_dim), StrokeKind::Inside);
                 }
-                let text_color = if current { th.bg } else if used { th.fg_bright } else { th.fg_dim };
+                let text_color = if current { th.on(th.accent) } else if used { th.fg_bright } else { th.fg_dim };
                 painter.text(rect.center(), Align2::CENTER_CENTER, PATTERN_NAMES[p], FontId::monospace(13.0), text_color);
                 if used && !current {
                     painter.circle_filled(Pos2::new(rect.center().x, rect.bottom() - 5.0), 1.5, th.accent);
@@ -509,13 +509,13 @@ impl App {
                     self.select_pattern(p, true);
                 }
             }
-            // Pattern actions.
+            if ui.add(button("Clear")).on_hover_text("clear this pattern [C] · undo with Ctrl+Z").clicked() {
+                self.clear_pattern();
+            }
+            // More pattern actions.
             egui::containers::menu::MenuButton::from_button(button("⋯")).ui(ui, |ui| {
                 if ui.button("Random pattern  [R]").clicked() {
                     self.randomize();
-                }
-                if ui.button("Clear pattern  [C]").clicked() {
-                    self.clear_pattern();
                 }
                 ui.separator();
                 ui.label(egui::RichText::new("Copy this pattern to").color(th.fg_dim).size(11.0));
@@ -550,7 +550,7 @@ impl App {
                 }
                 // The song name opens the settings of the whole song.
                 let settings_open = self.settings_open;
-                let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", self.song_name)).color(if settings_open { th.bg } else { th.fg_bright }))
+                let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", self.song_name)).color(if settings_open { th.on(th.accent) } else { th.fg_bright }))
                     .fill(if settings_open { th.accent } else { th.bg_light })
                     .min_size(Vec2::new(CONTROL_H, CONTROL_H));
                 if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and volume").clicked() {
@@ -799,7 +799,7 @@ impl App {
             let len = (lane.lens[n] as usize).min(steps - n);
             let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
             let sounding = playhead.is_some_and(|h| h >= n && h < n + len) && !dead;
-            let mut c = if accent { color } else { color.gamma_multiply(0.7) };
+            let mut c = if accent { color } else { th.soften(color) };
             if dead {
                 c = c.gamma_multiply(0.3);
             }
@@ -825,7 +825,7 @@ impl App {
                 p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width(), 3.0)), CornerRadius::ZERO, th.fg_bright);
             }
             if len > 1 && cell_w >= 18.0 {
-                p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.bg);
+                p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.on(c));
             }
         }
     }
@@ -859,7 +859,7 @@ impl App {
         let num_resp = ui.interact(num, ui.id().with(("num", ti)), Sense::click()).on_hover_text("click: select and preview · right-click: move up");
         let selected = self.selected == ti;
         ui.painter().rect_filled(num, CornerRadius::ZERO, if selected { th.accent } else if num_resp.hovered() { th.selection } else { th.bg_light });
-        ui.painter().text(num.center(), Align2::CENTER_CENTER, format!("{}", ti + 1), FontId::monospace(12.0), if selected { th.bg } else if num_resp.hovered() { th.fg_bright } else { th.fg_dim });
+        ui.painter().text(num.center(), Align2::CENTER_CENTER, format!("{}", ti + 1), FontId::monospace(12.0), if selected { th.on(th.accent) } else if num_resp.hovered() { th.fg_bright } else { th.fg_dim });
         if num_resp.clicked() {
             self.selected = ti;
             let t = &self.song.tracks[ti];
@@ -944,7 +944,7 @@ impl App {
         let p = ui.painter();
         let fill = if open { th.accent } else if fresp.hovered() { th.selection } else { th.bg_light };
         p.rect_filled(fx_rect, CornerRadius::ZERO, fill);
-        let color = if open { th.bg } else if active { th.magenta } else { th.fg_dim };
+        let color = if open { th.on(th.accent) } else if active { th.magenta } else { th.fg_dim };
         p.text(fx_rect.center(), Align2::CENTER_CENTER, "FX", FontId::monospace(12.0), color);
         if active && !open {
             p.circle_filled(Pos2::new(fx_rect.right() - 6.0, fx_rect.top() + 6.0), 2.0, th.magenta);
@@ -1123,7 +1123,7 @@ impl App {
                         preview = true;
                     }
                     let looping = self.fx_loop.is_some();
-                    let loop_button = egui::Button::new(egui::RichText::new("⟳  Loop").color(if looping { th.bg } else { th.fg }))
+                    let loop_button = egui::Button::new(egui::RichText::new("⟳  Loop").color(if looping { th.on(th.accent) } else { th.fg }))
                         .fill(if looping { th.accent } else { th.bg_light })
                         .min_size(Vec2::new(0.0, CONTROL_H));
                     if ui.add(loop_button).on_hover_text("play the sample again and again, with a pause in between").clicked() {
@@ -1214,7 +1214,7 @@ impl App {
                             let dresp = ui.interact(del, ui.id().with(("del", &info.name)), Sense::click());
                             let p = ui.painter();
                             p.rect_filled(del, CornerRadius::ZERO, if asking { th.red } else if dresp.hovered() { th.selection } else { th.bg_light });
-                            p.text(del.center(), Align2::CENTER_CENTER, if asking { "Sure?" } else { "Delete" }, FontId::monospace(11.0), if asking { th.bg } else { th.fg_dim });
+                            p.text(del.center(), Align2::CENTER_CENTER, if asking { "Sure?" } else { "Delete" }, FontId::monospace(11.0), if asking { th.on(th.red) } else { th.fg_dim });
                             if dresp.clicked() {
                                 action = Some((if asking { "delete" } else { "ask" }, info.name.clone()));
                             }
@@ -1425,7 +1425,7 @@ fn toggle(ui: &mut egui::Ui, th: &Theme, rect: Rect, text: &str, on: bool, color
     let p = ui.painter();
     let fill = if on { color } else if resp.hovered() { th.selection } else { th.bg_light };
     p.rect_filled(rect, CornerRadius::ZERO, fill);
-    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::monospace(12.0), if on { th.bg } else { th.fg_dim });
+    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::monospace(12.0), if on { th.on(color) } else { th.fg_dim });
     resp
 }
 
@@ -1511,7 +1511,7 @@ fn apply_theme(ctx: &egui::Context, th: &Theme) {
         ws.active.bg_fill = th.accent;
         ws.active.weak_bg_fill = th.accent;
         ws.active.bg_stroke = Stroke::new(1.0, th.accent);
-        ws.active.fg_stroke = Stroke::new(1.0, th.bg);
+        ws.active.fg_stroke = Stroke::new(1.0, th.on(th.accent));
         ws.open.bg_fill = th.selection;
         ws.open.weak_bg_fill = th.selection;
         ws.open.bg_stroke = Stroke::new(1.0, th.accent);
