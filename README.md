@@ -13,17 +13,17 @@ Built for Omarchy on Hyprland (Rust, with egui for the interface and cpal for au
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jankeesvw/sequencer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jankeesvw/omarchy-sequencer/main/install.sh | bash
 ```
 
-This downloads the latest release and puts `sequencer` in `~/.local/bin`, with a launcher entry and an icon, so **Sequencer** shows up under Super + Space. [install.sh](install.sh) is short, so read it first if you like. Prefer to build it yourself? See [Build from source](#build-from-source).
+This downloads the latest release and puts `omarchy-sequencer` in `~/.local/bin`, with a launcher entry and an icon, so **Sequencer** shows up under Super + Space. [install.sh](install.sh) is short, so read it first if you like. Prefer to build it yourself? See [Build from source](#build-from-source).
 
 A floating window suits it. Add this to `~/.config/hypr/windows.lua`:
 
 ```lua
-o.window("^sequencer$", { float = true })
-o.window("^sequencer$", { size = { 1280, 640 } })
-o.window("^sequencer$", { center = true })
+o.window("^omarchy-sequencer$", { float = true })
+o.window("^omarchy-sequencer$", { size = { 1280, 640 } })
+o.window("^omarchy-sequencer$", { center = true })
 ```
 
 ## What it does
@@ -136,11 +136,11 @@ With the mouse: right-click a cell for an accent, scroll over a note to change i
 
 | Command | What it does |
 |---|---|
-| `sequencer` | Open the song you had open last |
-| `sequencer --play` | Start playing right away |
-| `sequencer --preset demo`, `rave`, `late-night` | Start a new song from a preset |
-| `sequencer --install-pack <pack>` | Download a sound pack; without a name it lists them |
-| `sequencer --about` | Open with the about box |
+| `omarchy-sequencer` | Open the song you had open last |
+| `omarchy-sequencer --play` | Start playing right away |
+| `omarchy-sequencer --preset demo`, `rave`, `late-night` | Start a new song from a preset |
+| `omarchy-sequencer --install-pack <pack>` | Download a sound pack; without a name it lists them |
+| `omarchy-sequencer --about` | Open with the about box |
 
 ## What it writes to disk
 
@@ -148,9 +148,9 @@ With the mouse: right-click a cell for an accent, scroll over a note to change i
 |---|---|
 | `~/Music/Sequencer/<song>.json` | Your songs |
 | `~/Music/sequencer-<pattern>-<bpm>bpm-<nn>.wav` | Exports: the current pattern four times, with the tail of the effects |
-| `~/.local/share/sequencer/samples/` | Your recordings and your own `.wav` files |
-| `~/.local/share/sequencer/packs/<pack>/` | Downloaded sound packs, each with a `pack.json` saying where it came from |
-| `~/.config/sequencer/state.json` | Which song was open last |
+| `~/.local/share/omarchy-sequencer/samples/` | Your recordings and your own `.wav` files |
+| `~/.local/share/omarchy-sequencer/packs/<pack>/` | Downloaded sound packs, each with a `pack.json` saying where it came from |
+| `~/.config/omarchy-sequencer/state.json` | Which song was open last |
 
 ## How it works
 
@@ -167,8 +167,8 @@ Omarchy, or another Wayland desktop with PipeWire. `curl` and `bsdtar` for sound
 ## Build from source
 
 ```bash
-git clone https://github.com/jankeesvw/sequencer.git
-cd sequencer
+git clone https://github.com/jankeesvw/omarchy-sequencer.git
+cd omarchy-sequencer
 ./install.sh
 ```
 

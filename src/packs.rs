@@ -1,6 +1,6 @@
 //! Sound packs: free sample libraries you can download from inside the app.
 //!
-//! An installed pack is a folder in `~/.local/share/sequencer/packs/<id>/` with its WAV files
+//! An installed pack is a folder in `~/.local/share/omarchy-sequencer/packs/<id>/` with its WAV files
 //! and a `pack.json` that says where it came from. Downloading goes through `curl` and zips are
 //! unpacked with `bsdtar`, both part of every Arch install.
 
@@ -113,7 +113,7 @@ pub struct PackInfo {
 }
 
 pub fn dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("sequencer").join("packs")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join(crate::APP).join("packs")
 }
 
 /// Installed packs, with the folder their sounds are in.

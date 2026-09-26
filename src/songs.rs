@@ -43,7 +43,7 @@ fn path(name: &str) -> PathBuf {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sequencer"))
+    dirs::config_dir().map(|d| d.join(crate::APP))
 }
 
 pub fn write(name: &str, song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {

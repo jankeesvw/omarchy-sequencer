@@ -78,7 +78,7 @@ pub fn load_all() -> Vec<std::sync::Arc<Sample>> {
         .filter_map(|(name, kind, bytes)| decode(name, *kind, "classic", std::io::Cursor::new(*bytes)))
         .collect();
 
-    // Your own samples: drop .wav files in ~/.local/share/sequencer/samples
+    // Your own samples: drop .wav files in ~/.local/share/omarchy-sequencer/samples
     if let Some(dir) = user_sample_dir() {
         let mut paths: Vec<_> = std::fs::read_dir(&dir)
             .into_iter()
@@ -203,7 +203,7 @@ fn guess_kind(name: &str) -> Kind {
 }
 
 pub fn user_sample_dir() -> Option<std::path::PathBuf> {
-    dirs::data_dir().map(|d| d.join("sequencer").join("samples"))
+    dirs::data_dir().map(|d| d.join(crate::APP).join("samples"))
 }
 
 fn load_file(path: &Path) -> Option<Sample> {

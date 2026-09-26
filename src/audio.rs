@@ -525,7 +525,7 @@ pub fn start(samples: Vec<Arc<Sample>>, shared: Arc<Shared>) -> Output {
     match open_device(samples.clone(), shared.clone()) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!("sequencer: no audio ({e}), running silently");
+            eprintln!("omarchy-sequencer: no audio ({e}), running silently");
             std::thread::spawn(move || {
                 let mut engine = Engine::new(samples, shared, 44_100);
                 let mut buf = vec![0.0; 882];
@@ -582,7 +582,7 @@ where
                 }
             }
         },
-        |e| eprintln!("sequencer: audio error: {e}"),
+        |e| eprintln!("omarchy-sequencer: audio error: {e}"),
         None,
     )
 }
@@ -687,7 +687,7 @@ impl Recorder {
                 }
                 level.store(peak.to_bits(), Ordering::Relaxed);
             },
-            |e| eprintln!("sequencer: microphone error: {e}"),
+            |e| eprintln!("omarchy-sequencer: microphone error: {e}"),
             None,
         )
     }

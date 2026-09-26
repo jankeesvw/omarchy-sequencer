@@ -10,11 +10,25 @@ use std::sync::Arc;
 
 use eframe::egui;
 
+/// The name of the binary and of its folders.
+pub const APP: &str = "omarchy-sequencer";
+
+/// Earlier builds were called "sequencer": move their settings, packs and recordings over once.
+fn move_old_folders() {
+    for base in [dirs::config_dir(), dirs::data_dir()].into_iter().flatten() {
+        let (old, new) = (base.join("sequencer"), base.join(APP));
+        if old.is_dir() && !new.exists() {
+            let _ = std::fs::rename(old, new);
+        }
+    }
+}
+
 fn main() -> eframe::Result {
+    move_old_folders();
     let samples = samples::load_all();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("Usage: sequencer [--play] [--preset demo|rave|late-night]");
+        println!("Usage: {APP} [--play] [--preset demo|rave|late-night] [--about] [--install-pack <pack>]");
         println!("  --play           start playing right away");
         println!("  --preset <name>  start a new song from a preset");
         println!("  --install-pack <pack>  download a sound pack (run without a name to list them)");
@@ -22,7 +36,7 @@ fn main() -> eframe::Result {
     }
     if let Some(i) = args.iter().position(|a| a == "--install-pack") {
         let Some(entry) = args.get(i + 1).and_then(|id| packs::CATALOG.iter().find(|e| e.id == id)) else {
-            eprintln!("Usage: sequencer --install-pack <pack>. Packs:");
+            eprintln!("Usage: {APP} --install-pack <pack>. Packs:");
             for e in packs::CATALOG {
                 eprintln!("  {:18} {} ({}, {})", e.id, e.name, e.license, e.size);
             }
@@ -62,7 +76,7 @@ fn main() -> eframe::Result {
 
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_app_id("sequencer")
+            .with_app_id(APP)
             .with_transparent(true)
             .with_title("Sequencer")
             .with_inner_size([1400.0, 800.0])

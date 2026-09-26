@@ -176,7 +176,7 @@ impl App {
         }
     }
 
-    /// Opens the about box (used by `sequencer --about`).
+    /// Opens the about box (used by `omarchy-sequencer --about`).
     pub fn show_about(&mut self) {
         self.about_open = Some(Instant::now());
     }
@@ -396,7 +396,7 @@ impl App {
                     t.pitch = 0.0;
                 }
                 self.shared.preview.lock().unwrap().push((idx, 0.8, Some(track)));
-                self.say(format!("recorded {name} (saved in ~/.local/share/sequencer/samples)"));
+                self.say(format!("recorded {name} (saved in ~/.local/share/omarchy-sequencer/samples)"));
             }
             Err(e) => self.say(format!("recording not saved: {e}")),
         }
@@ -1330,7 +1330,7 @@ impl App {
                                     }
                                 }
                                 ui.add_space(4.0);
-                                ui.label(egui::RichText::new("Packs are saved in ~/.local/share/sequencer/packs").color(th.fg_dim).size(10.0));
+                                ui.label(egui::RichText::new("Packs are saved in ~/.local/share/omarchy-sequencer/packs").color(th.fg_dim).size(10.0));
                                 return;
                             }
                             let query = self.sounds_query.to_lowercase();
@@ -1355,7 +1355,7 @@ impl App {
                             }
                             if !any {
                                 let empty = if query.is_empty() && self.sounds_source == "user" {
-                                    "Nothing here yet. Record with the red button on a track, or put .wav files in ~/.local/share/sequencer/samples"
+                                    "Nothing here yet. Record with the red button on a track, or put .wav files in ~/.local/share/omarchy-sequencer/samples"
                                 } else {
                                     "No sounds found"
                                 };

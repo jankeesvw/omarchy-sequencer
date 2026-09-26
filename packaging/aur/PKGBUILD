@@ -1,12 +1,12 @@
 # Maintainer: Jankees van Woezik <mail@jankeesvw.com>
 
-pkgname=sequencer-bin
-_name=sequencer
+pkgname=omarchy-sequencer-bin
+_name=omarchy-sequencer
 pkgver=1.0.0
 pkgrel=1
 pkgdesc="A step sequencer for Omarchy: TR-808 drums, riffs, 90s rave sounds, effects per track, free sound packs and recording"
 arch=('x86_64')
-url="https://github.com/jankeesvw/sequencer"
+url="https://github.com/jankeesvw/omarchy-sequencer"
 license=('MIT')
 depends=('alsa-lib' 'gcc-libs' 'glibc' 'libglvnd' 'wayland' 'libxkbcommon' 'fontconfig' 'curl' 'libarchive')
 optdepends=('pipewire-alsa: play through PipeWire, part of every Omarchy install')
@@ -14,7 +14,7 @@ provides=("$_name")
 conflicts=("$_name")
 options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/$_name-$pkgver-x86_64-linux.tar.gz")
-sha256sums_x86_64=('07ef1ea1284e29ecdb4365e931c473871b91e6dcf4109c8f805eab97ae754e04')
+sha256sums_x86_64=('4a9c4863950465bf2df6cda3143fb18c19ecf58305676d9f1333c8e3cf7eecbf')
 
 package() {
   cd "$_name-$pkgver"

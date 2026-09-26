@@ -1,10 +1,10 @@
 [package]
-name = "sequencer"
+name = "omarchy-sequencer"
 version = "1.0.0"
 edition = "2024"
 description = "A step sequencer for Omarchy, with TR-808 drums, riffs, 90s rave samples and your own recordings"
 license = "MIT"
-repository = "https://github.com/jankeesvw/sequencer"
+repository = "https://github.com/jankeesvw/omarchy-sequencer"
 readme = "README.md"
 
 [dependencies]
