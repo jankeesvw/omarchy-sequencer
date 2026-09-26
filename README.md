@@ -1,6 +1,6 @@
-# CYBERSEQ//2000
+# Sequencer
 
-Een step sequencer voor Omarchy in 90s cyber-stijl: neon op zwart, scanlines, oscilloscoop, Win95-bevels. Geschreven in Rust met egui (UI) en cpal (audio via ALSA/PipeWire).
+Een step sequencer voor Omarchy in Rust (egui voor de interface, cpal voor audio via PipeWire). De app neemt kleuren en font over van het actieve Omarchy-thema en verandert live mee bij `omarchy theme set` of `omarchy font set` (font na een herstart).
 
 ## Installeren
 
@@ -8,18 +8,37 @@ Een step sequencer voor Omarchy in 90s cyber-stijl: neon op zwart, scanlines, os
 ./install.sh
 ```
 
-Dit bouwt een release, zet de binary in `~/.local/bin/sequencer` en installeert een `.desktop`-bestand en icoon, zodat hij in de Omarchy launcher staat (Super + Space → "CyberSeq"). Met `sequencer --play` start hij direct met afspelen.
+Dit bouwt een release, zet de binary in `~/.local/bin/sequencer` en installeert een `.desktop`-bestand en icoon, zodat hij in de Omarchy launcher staat (Super + Space → "Sequencer"). Met `sequencer --play` start hij direct met afspelen.
+
+## Wat erin zit
+
+- Grid van 1 tot 64 stappen en 1 tot 16 tracks, 8 patronen (A t/m H) die tijdens het spelen op de maatgrens wisselen.
+- Lange noten: elke track heeft een `L`-knop (1, 2, 4, 8 of 16 blokjes) voor nieuwe noten. Een lange noot klinkt precies zo lang als hij in het grid staat. Scroll boven een noot om hem langer of korter te maken.
+- Per track: sample, mute, solo, volume, pan, delay-send, toonhoogte in halve tonen.
+- Master: tempo met tap tempo, swing, lowpass-filter, ping-pong delay op tempo met feedback, volume.
+- Opnemen, zoals Voxtype: houd de rode knop van een track ingedrukt (of `V` voor de geselecteerde track) en neem op van je standaard microfoon. Stilte gaat eraf, de opname wordt genormaliseerd, bewaard als `rec_NN.wav` en meteen op die track gezet.
+- Undo en redo, automatisch opslaan in `~/.config/sequencer/song.json`, export van vier keer het huidige patroon naar een stereo WAV in `~/Music`.
+- Eigen samples: zet `.wav` bestanden in `~/.local/share/sequencer/samples`.
 
 ## Bediening
 
-- Links klikken of slepen over het grid: noten tekenen, klik op een noot om hem te wissen. Rechtsklik: accent (magenta, harder).
-- Lange noten: elke track heeft een `L`-knop (1, 2, 4, 8 of 16 blokjes) voor nieuwe noten. Riffs en 90s-samples staan standaard op 4, loops op 16. Een lange noot klinkt precies zo lang als hij in het grid staat. Scroll boven een noot om hem langer of korter te maken.
-- `90S RAVE` (of toets `9`) laadt een 135 BPM rave-patroon.
-- GRID: aantal stappen van 1 tot 64 (`-`/`+`, slepen, of de knoppen 8/12/16/24/32/64). Tracks toevoegen met `+ TRACK` (max 16), verwijderen met `×`.
-- Per track: sample kiezen (dropdown, speelt meteen af), mute, solo, volume (slepen of scrollen), pitch in halve tonen (verticaal slepen, dubbelklik = 0). Klik op het tracknummer om te previewen, rechtsklik schuift de track omhoog.
-- Toetsen: `Space` play/stop, `←`/`→` grid kleiner/groter, `↑`/`↓` BPM, `R` random patroon, `C` wissen, `T` track erbij, `Ctrl+S` opslaan.
-- Het patroon wordt automatisch bewaard in `~/.config/sequencer/pattern.json`.
-- Eigen samples: zet `.wav` bestanden in `~/.local/share/sequencer/samples`; ze verschijnen onder USER SAMPLES.
+| Actie | Muis | Toets |
+|---|---|---|
+| Afspelen / stoppen | Play | `Space` |
+| Noot tekenen of wissen | klikken / slepen | |
+| Accent | rechtsklik | |
+| Notelengte aanpassen | scrollen boven een noot | |
+| Stappen | − / + | `←` `→` |
+| Tempo | BPM, Tap | `↑` `↓`, `T` |
+| Patroon kiezen | A t/m H | `F1` t/m `F8` |
+| Patroon kopiëren | shift-klik of rechtsklik op een letter | `Shift+F1` t/m `F8` |
+| Track muten | M | `1` t/m `9` |
+| Track selecteren | tracknummer | `Tab` / `Shift+Tab` |
+| Opnemen | rode knop ingedrukt houden | `V` ingedrukt houden |
+| Random / wissen | Random / Clear | `R` / `C` |
+| Track erbij | + Track | `N` |
+| Undo / redo | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Opslaan / exporteren | Save / Export WAV | `Ctrl+S` / `Ctrl+E` |
 
 ## Samples
 

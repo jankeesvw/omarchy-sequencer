@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=CyberSeq 2000
+Name=Sequencer
 GenericName=Step Sequencer
-Comment=90s cyber drum & riff step sequencer
+Comment=Step sequencer met drums, riffs en eigen opnames
 Exec=sequencer
 Icon=sequencer
 Terminal=false

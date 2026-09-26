@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use std::sync::Arc;
+
 use crate::samples::Sample;
 
 pub const MAX_STEPS: usize = 64;
 pub const MAX_TRACKS: usize = 16;
+pub const PATTERNS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Cell {
@@ -13,34 +16,21 @@ pub enum Cell {
     Accent,
 }
 
+/// De noten van één track in één patroon.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Track {
-    pub sample: usize,
+pub struct Lane {
     pub cells: Vec<Cell>,
     /// Lengte in stappen van de noot die op deze stap begint. 1 = one-shot, langer = afgekapt na zoveel blokjes.
     pub lens: Vec<u8>,
-    /// Lengte voor nieuw geplaatste noten.
-    pub note_len: u8,
-    pub volume: f32,
-    pub pitch: f32,
-    pub mute: bool,
-    pub solo: bool,
 }
 
-impl Track {
-    pub fn new(sample: usize, note_len: u8) -> Self {
-        Self {
-            sample,
-            cells: vec![Cell::Off; MAX_STEPS],
-            lens: vec![1; MAX_STEPS],
-            note_len,
-            volume: 0.8,
-            pitch: 0.0,
-            mute: false,
-            solo: false,
-        }
+impl Default for Lane {
+    fn default() -> Self {
+        Self { cells: vec![Cell::Off; MAX_STEPS], lens: vec![1; MAX_STEPS] }
     }
+}
 
+impl Lane {
     /// De startstap van de noot die stap `s` bedekt, als die er is.
     pub fn note_at(&self, s: usize) -> Option<usize> {
         (0..=s).rev().find(|&n| self.cells[n] != Cell::Off && n + self.lens[n] as usize > s)
@@ -78,70 +68,158 @@ impl Track {
         self.cells.fill(Cell::Off);
         self.lens.fill(1);
     }
+
+    fn sanitize(&mut self) {
+        self.cells.resize(MAX_STEPS, Cell::Off);
+        self.lens.resize(MAX_STEPS, 1);
+        for l in &mut self.lens {
+            *l = (*l).clamp(1, 16);
+        }
+    }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Pattern {
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Track {
+    pub sample: usize,
+    /// Eén lane per patroon (A t/m H).
+    pub lanes: Vec<Lane>,
+    /// Lengte voor nieuw geplaatste noten.
+    pub note_len: u8,
+    pub volume: f32,
+    pub pitch: f32,
+    /// -1 links, 0 midden, 1 rechts.
+    pub pan: f32,
+    /// Hoeveel van deze track naar de delay gaat.
+    pub send: f32,
+    pub mute: bool,
+    pub solo: bool,
+}
+
+impl Track {
+    pub fn new(sample: usize, note_len: u8) -> Self {
+        Self {
+            sample,
+            lanes: vec![Lane::default(); PATTERNS],
+            note_len,
+            volume: 0.8,
+            pitch: 0.0,
+            pan: 0.0,
+            send: 0.0,
+            mute: false,
+            solo: false,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Song {
     pub bpm: f32,
     pub swing: f32,
-    pub steps: usize,
     pub master: f32,
+    /// Master lowpass, 0..1 (1 = open).
+    pub cutoff: f32,
+    /// Delaytijd in zestienden.
+    pub delay_steps: u8,
+    pub feedback: f32,
+    /// Aantal stappen per patroon.
+    pub steps: Vec<usize>,
+    /// Het patroon dat speelt en dat je bewerkt.
+    pub current: usize,
+    /// Wisselt naar dit patroon aan het eind van het huidige.
+    pub queued: Option<usize>,
     pub tracks: Vec<Track>,
 }
 
-impl Pattern {
-    pub fn demo(samples: &[Sample]) -> Self {
+impl Song {
+    fn empty(tracks: Vec<Track>, bpm: f32, steps: usize) -> Self {
+        Self {
+            bpm,
+            swing: 0.0,
+            master: 0.8,
+            cutoff: 1.0,
+            delay_steps: 3,
+            feedback: 0.35,
+            steps: vec![steps; PATTERNS],
+            current: 0,
+            queued: None,
+            tracks,
+        }
+    }
+
+    pub fn steps(&self) -> usize {
+        self.steps[self.current]
+    }
+
+    pub fn demo(samples: &[Arc<Sample>]) -> Self {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
-        let row = |name: &str, hits: &[usize], accents: &[usize]| {
-            let sample = idx(name);
-            let len = samples[sample].default_len();
-            let mut t = Track::new(sample, len);
+        let tracks = ["kick", "snare", "clap", "hat_closed", "hat_open", "cowbell", "bass_hit", "plucks"]
+            .iter()
+            .map(|n| {
+                let s = idx(n);
+                Track::new(s, samples[s].default_len())
+            })
+            .collect();
+        let mut song = Self::empty(tracks, 124.0, 16);
+        song.swing = 0.08;
+        let mut put = |t: usize, p: usize, hits: &[usize], accents: &[usize]| {
+            let len = song.tracks[t].note_len;
             for &h in hits {
-                t.place(h, if accents.contains(&h) { Cell::Accent } else { Cell::On }, len, 16);
+                let cell = if accents.contains(&h) { Cell::Accent } else { Cell::On };
+                song.tracks[t].lanes[p].place(h, cell, len, 16);
             }
-            t
         };
-        let mut tracks = vec![
-            row("kick", &[0, 4, 8, 12], &[0]),
-            row("snare", &[4, 12], &[]),
-            row("clap", &[12], &[]),
-            row("hat_closed", &[0, 2, 4, 6, 8, 10, 12, 14], &[2, 6, 10, 14]),
-            row("hat_open", &[7, 15], &[]),
-            row("cowbell", &[3, 11], &[]),
-            row("bass_hit", &[0, 3, 6, 10], &[0]),
-            row("plucks", &[8], &[]),
-        ];
-        tracks[5].volume = 0.4;
-        tracks[4].volume = 0.5;
-        Self { bpm: 124.0, swing: 0.08, steps: 16, master: 0.8, tracks }
+        // A: basisgroove.
+        put(0, 0, &[0, 4, 8, 12], &[0]);
+        put(1, 0, &[4, 12], &[]);
+        put(3, 0, &[0, 2, 4, 6, 8, 10, 12, 14], &[2, 6, 10, 14]);
+        put(4, 0, &[7, 15], &[]);
+        put(6, 0, &[0, 6, 10], &[0]);
+        // B: voller, met clap, cowbell en plucks.
+        put(0, 1, &[0, 4, 8, 12, 14], &[0]);
+        put(1, 1, &[4, 12], &[]);
+        put(2, 1, &[12], &[]);
+        put(3, 1, &[0, 2, 4, 6, 8, 10, 12, 14], &[2, 6, 10, 14]);
+        put(4, 1, &[7, 15], &[]);
+        put(5, 1, &[3, 11], &[]);
+        put(6, 1, &[0, 3, 6, 10], &[0]);
+        put(7, 1, &[8], &[]);
+        song.tracks[4].volume = 0.5;
+        song.tracks[4].pan = 0.3;
+        song.tracks[5].volume = 0.4;
+        song.tracks[5].pan = -0.4;
+        song.tracks[7].send = 0.4;
+        song
     }
 
     /// Een 135 BPM rave-patroon met lange noten voor loop, stabs, hoover en acid.
-    pub fn rave(samples: &[Sample]) -> Self {
+    pub fn rave(samples: &[Arc<Sample>]) -> Self {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
-        let row = |name: &str, notes: &[(usize, u8, bool)], volume: f32| {
+        let row = |name: &str, notes: &[(usize, u8, bool)], volume: f32, pan: f32, send: f32| {
             let sample = idx(name);
             let mut t = Track::new(sample, samples[sample].default_len());
             for &(s, len, accent) in notes {
-                t.place(s, if accent { Cell::Accent } else { Cell::On }, len, 32);
+                t.lanes[0].place(s, if accent { Cell::Accent } else { Cell::On }, len, 32);
             }
             t.volume = volume;
+            t.pan = pan;
+            t.send = send;
             t
         };
         let four = (0..32).step_by(4).map(|s| (s, 1, s % 16 == 0)).collect::<Vec<_>>();
+        let hats = (2..32).step_by(4).map(|s| (s, 1, false)).collect::<Vec<_>>();
         let tracks = vec![
-            row("kick", &four, 0.9),
-            row("rave_loop_135", &[(0, 16, false), (16, 16, true)], 0.6),
-            row("hat_open", &(2..32).step_by(4).map(|s| (s, 1, false)).collect::<Vec<_>>(), 0.4),
-            row("clap", &[(4, 1, false), (12, 1, false), (20, 1, false), (28, 1, true)], 0.6),
-            row("hoover", &[(0, 8, true), (24, 8, false)], 0.5),
-            row("rave_stab", &[(3, 2, true), (6, 2, false), (10, 4, false), (19, 2, true), (22, 2, false)], 0.6),
-            row("acid_line", &[(8, 4, false), (12, 4, true), (16, 8, false)], 0.45),
-            row("orch_hit", &[(0, 1, true), (16, 1, false)], 0.5),
-            row("m1_organ", &[(14, 2, false), (30, 2, false)], 0.5),
-            row("everybody", &[(28, 1, false)], 0.7),
+            row("kick", &four, 0.9, 0.0, 0.0),
+            row("rave_loop_135", &[(0, 16, false), (16, 16, true)], 0.6, 0.0, 0.0),
+            row("hat_open", &hats, 0.4, 0.35, 0.0),
+            row("clap", &[(4, 1, false), (12, 1, false), (20, 1, false), (28, 1, true)], 0.6, 0.0, 0.2),
+            row("hoover", &[(0, 8, true), (24, 8, false)], 0.5, -0.2, 0.2),
+            row("rave_stab", &[(3, 2, true), (6, 2, false), (10, 4, false), (19, 2, true), (22, 2, false)], 0.6, 0.25, 0.45),
+            row("acid_line", &[(8, 4, false), (12, 4, true), (16, 8, false)], 0.45, -0.3, 0.3),
+            row("orch_hit", &[(0, 1, true), (16, 1, false)], 0.5, 0.0, 0.5),
+            row("m1_organ", &[(14, 2, false), (30, 2, false)], 0.5, 0.2, 0.2),
+            row("everybody", &[(28, 1, false)], 0.7, 0.0, 0.4),
         ];
-        Self { bpm: 135.0, swing: 0.0, steps: 32, master: 0.8, tracks }
+        Self::empty(tracks, 135.0, 32)
     }
 
     pub fn any_solo(&self) -> bool {
@@ -149,92 +227,53 @@ impl Pattern {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct SavedTrack {
-    sample: String,
-    cells: Vec<Cell>,
-    #[serde(default)]
-    lens: Vec<u8>,
-    #[serde(default)]
-    note_len: u8,
-    volume: f32,
-    pitch: f32,
-    mute: bool,
-    solo: bool,
-}
-
+// Opgeslagen met samplenamen naast de indexen, zodat het bestand blijft kloppen als er samples bijkomen.
 #[derive(Serialize, Deserialize)]
 struct Saved {
-    bpm: f32,
-    swing: f32,
-    steps: usize,
-    master: f32,
-    tracks: Vec<SavedTrack>,
+    song: Song,
+    names: Vec<String>,
 }
 
 fn save_path() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("sequencer").join("pattern.json"))
+    dirs::config_dir().map(|d| d.join("sequencer").join("song.json"))
 }
 
-pub fn save(pattern: &Pattern, samples: &[Sample]) -> std::io::Result<()> {
-    let saved = Saved {
-        bpm: pattern.bpm,
-        swing: pattern.swing,
-        steps: pattern.steps,
-        master: pattern.master,
-        tracks: pattern
-            .tracks
-            .iter()
-            .map(|t| SavedTrack {
-                sample: samples[t.sample].name.clone(),
-                cells: t.cells.clone(),
-                lens: t.lens.clone(),
-                note_len: t.note_len,
-                volume: t.volume,
-                pitch: t.pitch,
-                mute: t.mute,
-                solo: t.solo,
-            })
-            .collect(),
-    };
+pub fn save(song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {
+    let names = song.tracks.iter().map(|t| samples[t.sample].name.clone()).collect();
+    let saved = Saved { song: song.clone(), names };
     let path = save_path().ok_or_else(|| std::io::Error::other("geen config dir"))?;
     std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(path, serde_json::to_string_pretty(&saved)?)
+    std::fs::write(path, serde_json::to_string(&saved)?)
 }
 
-pub fn load(samples: &[Sample]) -> Option<Pattern> {
+pub fn load(samples: &[Arc<Sample>]) -> Option<Song> {
     let text = std::fs::read_to_string(save_path()?).ok()?;
-    let saved: Saved = serde_json::from_str(&text).ok()?;
-    let tracks: Vec<Track> = saved
-        .tracks
-        .into_iter()
-        .take(MAX_TRACKS)
-        .map(|t| {
-            let mut cells = t.cells;
-            cells.resize(MAX_STEPS, Cell::Off);
-            let mut lens = t.lens;
-            lens.resize(MAX_STEPS, 1);
-            let sample = samples.iter().position(|s| s.name == t.sample).unwrap_or(0);
-            Track {
-                sample,
-                cells,
-                lens: lens.into_iter().map(|l| l.clamp(1, 16)).collect(),
-                note_len: if t.note_len == 0 { samples[sample].default_len() } else { t.note_len.clamp(1, 16) },
-                volume: t.volume.clamp(0.0, 1.0),
-                pitch: t.pitch.clamp(-24.0, 24.0),
-                mute: t.mute,
-                solo: t.solo,
-            }
-        })
-        .collect();
-    if tracks.is_empty() {
+    let Saved { mut song, names } = serde_json::from_str(&text).ok()?;
+    song.tracks.truncate(MAX_TRACKS);
+    if song.tracks.is_empty() || names.len() < song.tracks.len() {
         return None;
     }
-    Some(Pattern {
-        bpm: saved.bpm.clamp(40.0, 300.0),
-        swing: saved.swing.clamp(0.0, 0.5),
-        steps: saved.steps.clamp(1, MAX_STEPS),
-        master: saved.master.clamp(0.0, 1.0),
-        tracks,
-    })
+    for (t, name) in song.tracks.iter_mut().zip(&names) {
+        t.sample = samples.iter().position(|s| &s.name == name).unwrap_or(0);
+        t.lanes.resize(PATTERNS, Lane::default());
+        t.lanes.iter_mut().for_each(Lane::sanitize);
+        t.volume = t.volume.clamp(0.0, 1.0);
+        t.pitch = t.pitch.clamp(-24.0, 24.0);
+        t.pan = t.pan.clamp(-1.0, 1.0);
+        t.send = t.send.clamp(0.0, 1.0);
+        t.note_len = t.note_len.clamp(1, 16);
+    }
+    song.steps.resize(PATTERNS, 16);
+    for s in &mut song.steps {
+        *s = (*s).clamp(1, MAX_STEPS);
+    }
+    song.current = song.current.min(PATTERNS - 1);
+    song.queued = None;
+    song.bpm = song.bpm.clamp(40.0, 300.0);
+    song.swing = song.swing.clamp(0.0, 0.5);
+    song.master = song.master.clamp(0.0, 1.0);
+    song.cutoff = song.cutoff.clamp(0.0, 1.0);
+    song.feedback = song.feedback.clamp(0.0, 0.9);
+    song.delay_steps = song.delay_steps.clamp(1, 16);
+    Some(song)
 }

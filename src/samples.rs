@@ -27,18 +27,6 @@ pub enum Kind {
     User,
 }
 
-impl Kind {
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Kind::Drum => "DRM",
-            Kind::Riff => "RIF",
-            Kind::Rave => "90S",
-            Kind::Vox => "VOX",
-            Kind::User => "USR",
-        }
-    }
-}
 
 macro_rules! embed {
     ($kind:expr, $($name:literal),* $(,)?) => {
@@ -72,7 +60,7 @@ const VOX: [(&str, Kind, &[u8]); 10] = embed!(
     "access_granted", "security_breach", "system_error", "were_in",
 );
 
-pub fn load_all() -> Vec<Sample> {
+pub fn load_all() -> Vec<std::sync::Arc<Sample>> {
     let mut out: Vec<Sample> = DRUMS
         .iter()
         .chain(RIFFS.iter())
@@ -97,7 +85,7 @@ pub fn load_all() -> Vec<Sample> {
             }
         }
     }
-    out
+    out.into_iter().map(std::sync::Arc::new).collect()
 }
 
 pub fn user_sample_dir() -> Option<std::path::PathBuf> {
@@ -126,4 +114,38 @@ fn decode<R: std::io::Read>(name: &str, kind: Kind, reader: R) -> Option<Sample>
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect();
     Some(Sample { name: name.to_string(), kind, data, rate: spec.sample_rate })
+}
+
+/// Maakt van een ruwe microfoonopname een bruikbare sample: stilte eraf, genormaliseerd,
+/// opgeslagen als `rec_NN.wav` in de map met eigen samples.
+pub fn save_recording(raw: &[f32], rate: u32) -> Result<Sample, String> {
+    let peak = raw.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak < 0.01 {
+        return Err("niets gehoord, staat de microfoon aan?".into());
+    }
+    let threshold = (peak * 0.06).max(0.005);
+    let first = raw.iter().position(|s| s.abs() > threshold).unwrap_or(0);
+    let last = raw.iter().rposition(|s| s.abs() > threshold).unwrap_or(raw.len() - 1);
+    let pre = (rate as usize) / 200;
+    let post = (rate as usize) / 20;
+    let mut data: Vec<f32> = raw[first.saturating_sub(pre)..(last + post).min(raw.len())].iter().map(|s| s / peak * 0.9).collect();
+    let fade = data.len().min(rate as usize / 100);
+    let n = data.len();
+    for i in 0..fade {
+        data[n - 1 - i] *= i as f32 / fade as f32;
+    }
+
+    let dir = user_sample_dir().ok_or("geen data dir")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = (1..)
+        .map(|i| format!("rec_{i:02}"))
+        .find(|n| !dir.join(format!("{n}.wav")).exists())
+        .unwrap();
+    let spec = hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    let mut w = hound::WavWriter::create(dir.join(format!("{name}.wav")), spec).map_err(|e| e.to_string())?;
+    for s in &data {
+        w.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16).map_err(|e| e.to_string())?;
+    }
+    w.finalize().map_err(|e| e.to_string())?;
+    Ok(Sample { name, kind: Kind::User, data, rate })
 }
