@@ -7,6 +7,7 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2
 use crate::audio::{self, Output, Recorder, Shared};
 use crate::pattern::{Cell, FilterKind, Fx, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
 use crate::samples::{self, Kind, Sample};
+use crate::packs;
 use crate::songs;
 use crate::theme::{self, Theme};
 
@@ -77,6 +78,14 @@ pub struct App {
     rec_track: Option<usize>,
     export_result: Arc<Mutex<Option<String>>>,
     tab: Option<bool>,
+    /// The sound browser: which track it picks for, which list it shows, and the search.
+    sounds_open: Option<usize>,
+    sounds_source: String,
+    sounds_query: String,
+    /// Packs being downloaded: id and progress line; finished installs wait in `installed`.
+    installing: Arc<Mutex<Vec<(String, Arc<Mutex<String>>)>>>,
+    installed: Arc<Mutex<Vec<(String, Result<(), String>)>>>,
+    confirm_remove: Option<String>,
     /// Trigger animations: track, step, and when it fired.
     flashes: Vec<(usize, usize, Instant)>,
     last_step: Option<usize>,
@@ -122,6 +131,12 @@ impl App {
             rec_track: None,
             export_result: Arc::new(Mutex::new(None)),
             tab: None,
+            sounds_open: None,
+            sounds_source: "classic:drum".into(),
+            sounds_query: String::new(),
+            installing: Arc::new(Mutex::new(Vec::new())),
+            installed: Arc::new(Mutex::new(Vec::new())),
+            confirm_remove: None,
             flashes: Vec::new(),
             last_step: None,
             fx_open: None,
@@ -149,6 +164,7 @@ impl App {
             Kind::Rave => self.theme.green,
             Kind::Vox => self.theme.yellow,
             Kind::User => self.theme.cyan,
+            Kind::Pack => self.theme.orange,
         }
     }
 
@@ -869,41 +885,26 @@ impl App {
             *move_up = Some(ti);
         }
 
-        let combo_rect = next(150.0);
-        let mut chosen = None;
+        // The sample name opens the sound browser.
+        let sample_rect = next(150.0);
         let current = self.song.tracks[ti].sample;
-        let mut combo_ui = ui.new_child(egui::UiBuilder::new().max_rect(combo_rect).id_salt(("combo", ti)));
-        combo_ui.spacing_mut().interact_size.y = h;
-        egui::ComboBox::from_id_salt(("sample", ti))
-            .width(COLUMNS[1].1)
-            .height(480.0)
-            .selected_text(egui::RichText::new(samples[current].name.replace('_', " ")).color(th.fg_bright))
-            .show_ui(&mut combo_ui, |ui| {
-                for kind in [Kind::Drum, Kind::Riff, Kind::Rave, Kind::Vox, Kind::User] {
-                    let mut first = true;
-                    for (i, smp) in samples.iter().enumerate().filter(|(_, x)| x.kind == kind) {
-                        if first {
-                            let title = match kind {
-                                Kind::Drum => "TR-808 drums",
-                                Kind::Riff => "Riffs",
-                                Kind::Rave => "90s rave",
-                                Kind::Vox => "Vocals",
-                                Kind::User => "Your samples and recordings",
-                            };
-                            ui.label(egui::RichText::new(title).color(self.kind_color(kind)).size(11.0));
-                            first = false;
-                        }
-                        if ui.selectable_label(current == i, smp.name.replace('_', " ")).clicked() {
-                            chosen = Some(i);
-                        }
-                    }
-                }
-            });
-        if let Some(i) = chosen {
-            let t = &mut self.song.tracks[ti];
-            t.sample = i;
-            t.note_len = samples[i].default_len();
-            self.shared.preview.lock().unwrap().push((i, t.volume, Some(ti)));
+        let open = self.sounds_open == Some(ti);
+        let sresp = ui.interact(sample_rect, ui.id().with(("sample", ti)), Sense::click()).on_hover_text("choose a sound");
+        let p = ui.painter();
+        p.rect_filled(sample_rect, CornerRadius::ZERO, if open { th.accent } else if sresp.hovered() { th.selection } else { th.bg_light });
+        let text = if open { th.on(th.accent) } else { th.fg_bright };
+        let label = ui.painter().layout_no_wrap(samples[current].name.replace('_', " "), FontId::monospace(12.0), text);
+        let clip = sample_rect.shrink2(Vec2::new(8.0, 0.0)).with_max_x(sample_rect.right() - 20.0);
+        ui.painter().with_clip_rect(clip).galley(Pos2::new(clip.left(), sample_rect.center().y - label.size().y / 2.0), label, text);
+        ui.painter().text(Pos2::new(sample_rect.right() - 10.0, sample_rect.center().y), Align2::CENTER_CENTER, "…", FontId::monospace(12.0), if open { text } else { th.fg_dim });
+        if sresp.clicked() {
+            if open {
+                self.sounds_open = None;
+            } else {
+                self.sounds_open = Some(ti);
+                self.sounds_source = source_of(&samples[current]);
+                self.sounds_query.clear();
+            }
         }
 
         // Mute, solo and record.
@@ -1162,6 +1163,183 @@ impl App {
         }
     }
 
+    fn start_install(&mut self, id: &str) {
+        let Some(entry) = packs::CATALOG.iter().find(|e| e.id == id) else { return };
+        let progress = Arc::new(Mutex::new("starting…".to_string()));
+        self.installing.lock().unwrap().push((id.to_owned(), progress.clone()));
+        let (installing, installed) = (self.installing.clone(), self.installed.clone());
+        std::thread::spawn(move || {
+            let result = packs::install(entry, &progress);
+            installing.lock().unwrap().retain(|(i, _)| i != entry.id);
+            installed.lock().unwrap().push((entry.id.to_owned(), result));
+        });
+    }
+
+    /// Picks up finished downloads: their sounds become available right away.
+    fn finish_installs(&mut self) {
+        let done = std::mem::take(&mut *self.installed.lock().unwrap());
+        for (id, result) in done {
+            match result {
+                Ok(()) => {
+                    let new = samples::load_pack(&id, &packs::dir().join(&id));
+                    let count = new.len();
+                    for sample in new {
+                        let sample = Arc::new(sample);
+                        self.samples.push(sample.clone());
+                        self.shared.incoming.lock().unwrap().push(sample);
+                    }
+                    let name = packs::CATALOG.iter().find(|e| e.id == id).map_or(id.as_str(), |e| e.name);
+                    self.say(format!("{name} installed: {count} sounds"));
+                    if self.sounds_source == "get" {
+                        self.sounds_source = id.clone();
+                    }
+                }
+                Err(e) => self.say(format!("installing {id} failed: {e}")),
+            }
+        }
+    }
+
+    fn sounds_window(&mut self, ctx: &egui::Context) {
+        let Some(ti) = self.sounds_open else { return };
+        if ti >= self.song.tracks.len() {
+            self.sounds_open = None;
+            return;
+        }
+        let th = self.theme.clone();
+        let current = self.song.tracks[ti].sample;
+        let installed_packs = packs::installed();
+        let mut sources: Vec<(String, String, &str)> = vec![
+            ("classic:drum".into(), "808 drums".into(), "Classic"),
+            ("classic:riff".into(), "Riffs".into(), "Classic"),
+            ("classic:rave".into(), "90s rave".into(), "Classic"),
+            ("classic:vox".into(), "Vocals".into(), "Classic"),
+        ];
+        for (info, _) in &installed_packs {
+            sources.push((info.id.clone(), info.name.clone(), "Packs"));
+        }
+        sources.push(("user".into(), "Your sounds".into(), "Yours"));
+        let mut chosen = None;
+        let mut preview = None;
+        let mut install = None;
+        let mut remove = None;
+        let mut open = true;
+        egui::Window::new(format!("Sounds · track {}", ti + 1))
+            .id(egui::Id::new("sounds_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(Pos2::new(LEFT_W + 8.0, 60.0))
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                let search = ui.add_sized([560.0, CONTROL_H], egui::TextEdit::singleline(&mut self.sounds_query).hint_text("search all sounds…").vertical_align(egui::Align::Center));
+                if search.changed() && !self.sounds_query.is_empty() && self.sounds_source == "get" {
+                    self.sounds_source = "classic:drum".into();
+                }
+                ui.add_space(4.0);
+                ui.horizontal_top(|ui| {
+                    // Where the sounds come from.
+                    ui.vertical(|ui| {
+                        ui.set_width(170.0);
+                        let mut group = "";
+                        for (key, name, g) in &sources {
+                            if *g != group {
+                                section(ui, &th, g);
+                                group = g;
+                            }
+                            let on = self.sounds_query.is_empty() && &self.sounds_source == key;
+                            if list_row(ui, &th, name, on).clicked() {
+                                self.sounds_source = key.clone();
+                                self.sounds_query.clear();
+                            }
+                        }
+                        ui.add_space(8.0);
+                        let on = self.sounds_query.is_empty() && self.sounds_source == "get";
+                        if list_row(ui, &th, "+ Get more packs", on).clicked() {
+                            self.sounds_source = "get".into();
+                            self.sounds_query.clear();
+                        }
+                    });
+                    ui.add_space(6.0);
+                    // The sounds themselves, or the packs you can download.
+                    ui.vertical(|ui| {
+                        ui.set_width(380.0);
+                        egui::ScrollArea::vertical().id_salt("sounds_list").max_height(420.0).min_scrolled_height(420.0).show(ui, |ui| {
+                            ui.set_width(372.0);
+                            if self.sounds_query.is_empty() && self.sounds_source == "get" {
+                                let busy: Vec<(String, String)> = self.installing.lock().unwrap().iter().map(|(i, p)| (i.clone(), p.lock().unwrap().clone())).collect();
+                                for entry in packs::CATALOG {
+                                    let is_installed = installed_packs.iter().any(|(i, _)| i.id == entry.id);
+                                    let progress = busy.iter().find(|(i, _)| i == entry.id).map(|(_, p)| p.clone());
+                                    match pack_row(ui, &th, entry, is_installed, progress, self.confirm_remove.as_deref() == Some(entry.id)) {
+                                        Some(PackAction::Install) => install = Some(entry.id),
+                                        Some(PackAction::AskRemove) => self.confirm_remove = Some(entry.id.into()),
+                                        Some(PackAction::Remove) => remove = Some(entry.id),
+                                        None => {}
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Free sound libraries (CC0 or public domain). They go in ~/.local/share/sequencer/packs.").color(th.fg_dim).size(11.0));
+                                return;
+                            }
+                            let query = self.sounds_query.to_lowercase().replace(' ', "_");
+                            let visible = |s: &Sample| {
+                                if !query.is_empty() {
+                                    let hidden = !matches!(s.pack.as_str(), "classic" | "user") && !installed_packs.iter().any(|(i, _)| i.id == s.pack);
+                                    return !hidden && s.name.contains(&query);
+                                }
+                                source_of(s) == self.sounds_source
+                            };
+                            let mut any = false;
+                            for (i, smp) in self.samples.iter().enumerate().filter(|(_, s)| visible(s)) {
+                                any = true;
+                                let pack = (!query.is_empty()).then(|| source_name(&smp.pack, &installed_packs));
+                                let resp = sound_row(ui, &th, &smp.name.replace('_', " "), pack.as_deref(), self.kind_color(smp.kind), current == i);
+                                if resp.clicked() {
+                                    chosen = Some(i);
+                                }
+                                if resp.secondary_clicked() {
+                                    preview = Some(i);
+                                }
+                            }
+                            if !any {
+                                let empty = if query.is_empty() && self.sounds_source == "user" {
+                                    "Nothing here yet. Record with the red button on a track, or put .wav files in ~/.local/share/sequencer/samples"
+                                } else {
+                                    "No sounds found"
+                                };
+                                ui.label(egui::RichText::new(empty).color(th.fg_dim).size(12.0));
+                            }
+                        });
+                    });
+                });
+                ui.label(egui::RichText::new("click: use it on this track · right-click: just listen").color(th.fg_dim).size(11.0));
+            });
+        if let Some(i) = chosen {
+            let t = &mut self.song.tracks[ti];
+            t.sample = i;
+            t.note_len = self.samples[i].default_len();
+            self.shared.preview.lock().unwrap().push((i, t.volume, Some(ti)));
+        }
+        if let Some(i) = preview {
+            self.shared.preview.lock().unwrap().push((i, 0.8, None));
+        }
+        if let Some(id) = install {
+            self.start_install(id);
+        }
+        if let Some(id) = remove {
+            self.confirm_remove = None;
+            match packs::remove(id) {
+                Ok(()) => self.say("pack removed; tracks that use it keep their sound until you restart"),
+                Err(e) => self.say(format!("removing failed: {e}")),
+            }
+        }
+        if !open {
+            self.sounds_open = None;
+            self.confirm_remove = None;
+        }
+    }
+
     fn songs_window(&mut self, ctx: &egui::Context) {
         if !self.songs_open {
             return;
@@ -1352,6 +1530,8 @@ impl eframe::App for App {
 
         self.fx_window(&ctx);
         self.songs_window(&ctx);
+        self.finish_installs();
+        self.sounds_window(&ctx);
         self.master_window(&ctx);
 
         let pointer_down = ctx.input(|i| i.pointer.any_down());
@@ -1370,7 +1550,7 @@ impl eframe::App for App {
         }
         // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
         // Input still triggers an immediate repaint.
-        let busy = self.playing() || self.recorder.recording() || self.fx_loop.is_some() || self.meters.iter().any(|m| *m > 0.01);
+        let busy = self.playing() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
         ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 
@@ -1540,4 +1720,97 @@ fn row_label(ui: &mut egui::Ui, th: &Theme, text: &str) {
         ui.set_min_width(84.0);
         ui.label(egui::RichText::new(text).color(th.fg_dim).size(12.0));
     });
+}
+
+/// Which list of the sound browser a sample belongs to.
+fn source_of(s: &Sample) -> String {
+    match s.pack.as_str() {
+        "classic" => match s.kind {
+            Kind::Riff => "classic:riff",
+            Kind::Rave => "classic:rave",
+            Kind::Vox => "classic:vox",
+            _ => "classic:drum",
+        }
+        .into(),
+        pack => pack.into(),
+    }
+}
+
+fn source_name(pack: &str, installed: &[(packs::PackInfo, std::path::PathBuf)]) -> String {
+    match pack {
+        "classic" => "Classic".into(),
+        "user" => "Yours".into(),
+        id => installed.iter().find(|(i, _)| i.id == id).map_or(id.to_owned(), |(i, _)| i.name.clone()),
+    }
+}
+
+/// A clickable row in the left column of a dialog.
+fn list_row(ui: &mut egui::Ui, th: &Theme, text: &str, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::ZERO, if on { th.accent } else if resp.hovered() { th.selection } else { th.bg_dark });
+    p.text(rect.left_center() + Vec2::new(10.0, 0.0), Align2::LEFT_CENTER, text, FontId::monospace(12.0), if on { th.on(th.accent) } else { th.fg });
+    resp
+}
+
+fn sound_row(ui: &mut egui::Ui, th: &Theme, name: &str, pack: Option<&str>, color: Color32, current: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::ZERO, if current { th.selection } else if resp.hovered() { th.bg_light } else { th.bg_dark });
+    p.rect_filled(Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 7.0), Vec2::new(3.0, 12.0)), CornerRadius::ZERO, color);
+    p.text(rect.left_center() + Vec2::new(12.0, 0.0), Align2::LEFT_CENTER, name, FontId::monospace(12.0), if current { th.fg_bright } else { th.fg });
+    if let Some(pack) = pack {
+        p.text(rect.right_center() - Vec2::new(8.0, 0.0), Align2::RIGHT_CENTER, pack, FontId::monospace(10.0), th.fg_dim);
+    } else if resp.hovered() {
+        p.text(rect.right_center() - Vec2::new(8.0, 0.0), Align2::RIGHT_CENTER, "use", FontId::monospace(10.0), th.fg_dim);
+    }
+    resp
+}
+
+enum PackAction {
+    Install,
+    AskRemove,
+    Remove,
+}
+
+fn pack_row(ui: &mut egui::Ui, th: &Theme, entry: &packs::CatalogEntry, installed: bool, progress: Option<String>, asking: bool) -> Option<PackAction> {
+    // Name, then who made it and the licence, then what is in it; the text wraps before the button.
+    let wrap = ui.available_width() - 110.0;
+    let meta = ui.painter().layout(format!("{} · {} · {}", entry.author, entry.license, entry.size), FontId::monospace(10.0), th.fg_dim, wrap);
+    let about = ui.painter().layout(entry.about.to_owned(), FontId::monospace(10.0), th.fg, wrap);
+    let height = 30.0 + meta.size().y + 4.0 + about.size().y + 10.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::ZERO, th.bg_light);
+    p.text(rect.left_top() + Vec2::new(10.0, 9.0), Align2::LEFT_TOP, entry.name, FontId::monospace(13.0), th.fg_bright);
+    let about_y = 30.0 + meta.size().y + 4.0;
+    p.galley(rect.left_top() + Vec2::new(10.0, 30.0), meta, th.fg_dim);
+    p.galley(rect.left_top() + Vec2::new(10.0, about_y), about, th.fg);
+    let button = Rect::from_center_size(Pos2::new(rect.right() - 46.0, rect.center().y), Vec2::new(76.0, CONTROL_H));
+    let mut action = None;
+    if let Some(progress) = progress {
+        ui.painter().text(button.center(), Align2::CENTER_CENTER, progress, FontId::monospace(10.0), th.accent);
+    } else {
+        let resp = ui.interact(button, ui.id().with(("pack", entry.id)), Sense::click());
+        let (label, fill, text) = match (installed, asking) {
+            (false, _) => ("Get", if resp.hovered() { th.selection } else { th.accent }, None),
+            (true, false) => ("Remove", if resp.hovered() { th.selection } else { th.bg_dark }, Some(th.fg_dim)),
+            (true, true) => ("Sure?", th.red, None),
+        };
+        let p = ui.painter();
+        p.rect_filled(button, CornerRadius::ZERO, fill);
+        p.text(button.center(), Align2::CENTER_CENTER, label, FontId::monospace(11.0), text.unwrap_or_else(|| th.on(fill)));
+        if resp.clicked() {
+            action = Some(match (installed, asking) {
+                (false, _) => PackAction::Install,
+                (true, false) => PackAction::AskRemove,
+                (true, true) => PackAction::Remove,
+            });
+        }
+        if installed && !asking {
+            ui.painter().text(Pos2::new(button.left() - 10.0, button.center().y), Align2::RIGHT_CENTER, "✓", FontId::monospace(13.0), th.green);
+        }
+    }
+    ui.add_space(3.0);
+    action
 }

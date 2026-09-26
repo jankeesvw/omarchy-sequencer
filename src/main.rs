@@ -1,4 +1,5 @@
 mod audio;
+mod packs;
 mod pattern;
 mod samples;
 mod songs;

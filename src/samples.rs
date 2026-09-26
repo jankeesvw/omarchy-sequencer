@@ -2,6 +2,10 @@ use std::path::Path;
 
 pub struct Sample {
     pub name: String,
+    /// Where it comes from: "classic" (built in), "user" (your own and recordings) or a pack id.
+    pub pack: String,
+    /// Unique across packs, used in song files: the name for built-in and own samples, "pack/name" otherwise.
+    pub id: String,
     pub kind: Kind,
     pub data: Vec<f32>,
     pub rate: u32,
@@ -13,7 +17,7 @@ impl Sample {
         match self.kind {
             _ if self.name.contains("loop") => 16,
             Kind::Riff | Kind::Rave => 4,
-            Kind::Drum | Kind::Vox | Kind::User => 1,
+            Kind::Drum | Kind::Vox | Kind::User | Kind::Pack => 1,
         }
     }
 }
@@ -25,7 +29,12 @@ pub enum Kind {
     Rave,
     Vox,
     User,
+    /// A sound from a downloaded pack that is not clearly a drum or a bass.
+    Pack,
 }
+
+/// Longest sample kept in memory; packs sometimes contain long soundscapes.
+const MAX_SECONDS: u32 = 12;
 
 
 macro_rules! embed {
@@ -66,7 +75,7 @@ pub fn load_all() -> Vec<std::sync::Arc<Sample>> {
         .chain(RIFFS.iter())
         .chain(RAVE.iter())
         .chain(VOX.iter())
-        .filter_map(|(name, kind, bytes)| decode(name, *kind, std::io::Cursor::new(*bytes)))
+        .filter_map(|(name, kind, bytes)| decode(name, *kind, "classic", std::io::Cursor::new(*bytes)))
         .collect();
 
     // Your own samples: drop .wav files in ~/.local/share/sequencer/samples
@@ -85,7 +94,66 @@ pub fn load_all() -> Vec<std::sync::Arc<Sample>> {
             }
         }
     }
+    for (info, dir) in crate::packs::installed() {
+        out.extend(load_pack(&info.id, &dir));
+    }
     out.into_iter().map(std::sync::Arc::new).collect()
+}
+
+/// Every WAV in an installed pack.
+pub fn load_pack(pack: &str, dir: &Path) -> Vec<Sample> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")))
+        .collect();
+    paths.sort_by_key(|p| natural_key(&p.to_string_lossy().to_lowercase()));
+    paths
+        .iter()
+        .filter_map(|path| {
+            let name = path.file_stem()?.to_string_lossy().to_lowercase().replace(' ', "_");
+            let file = std::fs::File::open(path).ok()?;
+            decode(&name, guess_kind(&name), pack, std::io::BufReader::new(file))
+        })
+        .collect()
+}
+
+/// Sort key that puts "laser2" before "laser10": runs of digits compare as numbers.
+fn natural_key(s: &str) -> Vec<(String, u64)> {
+    let mut key = Vec::new();
+    let mut text = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() {
+            let mut n = c.to_digit(10).unwrap() as u64;
+            while let Some(d) = chars.peek().and_then(|d| d.to_digit(10)) {
+                n = n.saturating_mul(10).saturating_add(d as u64);
+                chars.next();
+            }
+            key.push((std::mem::take(&mut text), n));
+        } else {
+            text.push(c);
+        }
+    }
+    key.push((text, 0));
+    key
+}
+
+/// Sorts a pack sound into drums, bass or the rest by its name, for its colour and note length.
+fn guess_kind(name: &str) -> Kind {
+    const DRUMS: [&str; 23] = [
+        "kick", "snare", "hat", "clap", "tom", "rim", "perc", "cajon", "conga", "bongo", "shaker", "tamb", "stomp", "cymbal",
+        "crash", "ride", "snap", "slap", "bodhran", "bodrhain", "guiro", "drum", "beatbox",
+    ];
+    if DRUMS.iter().any(|d| name.contains(d)) {
+        Kind::Drum
+    } else if ["bass", "808", "reese", "donk"].iter().any(|b| name.contains(b)) {
+        Kind::Riff
+    } else {
+        Kind::Pack
+    }
 }
 
 pub fn user_sample_dir() -> Option<std::path::PathBuf> {
@@ -95,10 +163,10 @@ pub fn user_sample_dir() -> Option<std::path::PathBuf> {
 fn load_file(path: &Path) -> Option<Sample> {
     let name = path.file_stem()?.to_string_lossy().to_lowercase();
     let file = std::fs::File::open(path).ok()?;
-    decode(&name, Kind::User, std::io::BufReader::new(file))
+    decode(&name, Kind::User, "user", std::io::BufReader::new(file))
 }
 
-fn decode<R: std::io::Read>(name: &str, kind: Kind, reader: R) -> Option<Sample> {
+fn decode<R: std::io::Read>(name: &str, kind: Kind, pack: &str, reader: R) -> Option<Sample> {
     let mut wav = hound::WavReader::new(reader).ok()?;
     let spec = wav.spec();
     let channels = spec.channels.max(1) as usize;
@@ -109,11 +177,16 @@ fn decode<R: std::io::Read>(name: &str, kind: Kind, reader: R) -> Option<Sample>
             wav.samples::<i32>().filter_map(Result::ok).map(|s| s as f32 * scale).collect()
         }
     };
-    let data = interleaved
+    let data: Vec<f32> = interleaved
         .chunks(channels)
+        .take((spec.sample_rate * MAX_SECONDS) as usize)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect();
-    Some(Sample { name: name.to_string(), kind, data, rate: spec.sample_rate })
+    if data.len() < 2 {
+        return None;
+    }
+    let id = if matches!(pack, "classic" | "user") { name.to_string() } else { format!("{pack}/{name}") };
+    Some(Sample { name: name.to_string(), pack: pack.to_string(), id, kind, data, rate: spec.sample_rate })
 }
 
 /// Turns a raw microphone recording into a usable sample: silence trimmed, normalized,
@@ -147,5 +220,17 @@ pub fn save_recording(raw: &[f32], rate: u32) -> Result<Sample, String> {
         w.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16).map_err(|e| e.to_string())?;
     }
     w.finalize().map_err(|e| e.to_string())?;
-    Ok(Sample { name, kind: Kind::User, data, rate })
+    Ok(Sample { id: name.clone(), name, pack: "user".into(), kind: Kind::User, data, rate })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorts_numbers_naturally() {
+        let mut names = vec!["laser10", "laser2", "laser1", "kick"];
+        names.sort_by_key(|n| natural_key(n));
+        assert_eq!(names, ["kick", "laser1", "laser2", "laser10"]);
+    }
 }

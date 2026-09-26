@@ -344,7 +344,7 @@ impl Song {
     pub fn sanitize(&mut self, names: &[String], samples: &[Arc<Sample>]) {
         self.tracks.truncate(MAX_TRACKS);
         for (t, name) in self.tracks.iter_mut().zip(names) {
-            t.sample = samples.iter().position(|s| &s.name == name).unwrap_or(0);
+            t.sample = samples.iter().position(|s| &s.id == name).or_else(|| samples.iter().position(|s| &s.name == name)).unwrap_or(0);
         }
         for t in &mut self.tracks {
             t.sample = t.sample.min(samples.len() - 1);

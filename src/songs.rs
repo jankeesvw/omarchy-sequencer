@@ -47,7 +47,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 pub fn write(name: &str, song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {
-    let file = SongFile { song: song.clone(), names: song.tracks.iter().map(|t| samples[t.sample].name.clone()).collect() };
+    let file = SongFile { song: song.clone(), names: song.tracks.iter().map(|t| samples[t.sample].id.clone()).collect() };
     std::fs::create_dir_all(dir())?;
     // Write next to it first, so a crash halfway never leaves a broken song behind.
     let tmp = dir().join(format!(".{name}.{EXT}.tmp"));
