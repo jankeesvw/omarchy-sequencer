@@ -86,7 +86,7 @@ impl App {
         }
         let used: Vec<usize> = self.pat.tracks.iter().map(|t| t.sample).collect();
         let next = (0..self.samples.len()).find(|i| !used.contains(i)).unwrap_or(0);
-        self.pat.tracks.push(Track::new(next, self.samples[next].kind.default_len()));
+        self.pat.tracks.push(Track::new(next, self.samples[next].default_len()));
     }
 
     fn randomize(&mut self) {
@@ -102,6 +102,8 @@ impl App {
                     (_, "snare" | "snare_snappy" | "clap") => if i % 8 == 4 { 0.9 } else { 0.06 },
                     (_, "hat_closed" | "maracas") => if i % 2 == 0 { 0.85 } else { 0.35 },
                     (_, "hat_open") => if i % 4 == 2 { 0.6 } else { 0.03 },
+                    (_, n) if n.contains("loop") => if i % 16 == 0 { 0.9 } else { 0.0 },
+                    (Kind::Vox, _) => if i % 16 == 12 { 0.4 } else { 0.0 },
                     (Kind::Riff | Kind::Rave, _) => if i % 4 == 0 { 0.3 } else { 0.1 },
                     _ => 0.12,
                 };
@@ -170,7 +172,7 @@ impl App {
         }
         if rave {
             self.pat = Pattern::rave(&self.samples);
-            self.say("LOADING RAVE.MOD // 138 BPM // HARDCORE UPROAR");
+            self.say("LOADING RAVE.MOD // 135 BPM // HARDCORE UPROAR");
         }
         if plus {
             self.add_track();
@@ -278,9 +280,9 @@ impl App {
                 clear_cells(&mut self.pat);
                 self.say("PATROON GEWIST");
             }
-            if neon_button(ui, "90S RAVE", GREEN, false, 84.0).on_hover_text("laad een 138 BPM rave-patroon [9]").clicked() {
+            if neon_button(ui, "90S RAVE", GREEN, false, 84.0).on_hover_text("laad een 135 BPM rave-patroon [9]").clicked() {
                 self.pat = Pattern::rave(&self.samples);
-                self.say("LOADING RAVE.MOD // 138 BPM // HARDCORE UPROAR");
+                self.say("LOADING RAVE.MOD // 135 BPM // HARDCORE UPROAR");
             }
             if neon_button(ui, "SAVE", GREEN, false, 56.0).clicked() {
                 self.save_now();
@@ -484,6 +486,7 @@ impl App {
             Kind::Drum => CYAN,
             Kind::Riff => MAGENTA,
             Kind::Rave => GREEN,
+            Kind::Vox => Color32::from_rgb(255, 140, 0),
             Kind::User => YELLOW,
         };
         let mut chosen = None;
@@ -497,14 +500,15 @@ impl App {
                 .height(420.0)
                 .selected_text(egui::RichText::new(format!("{} {}", s.kind.label(), s.name.to_uppercase())).color(kind_color))
                 .show_ui(ui, |ui| {
-                    for kind in [Kind::Drum, Kind::Riff, Kind::Rave, Kind::User] {
+                    for kind in [Kind::Drum, Kind::Riff, Kind::Rave, Kind::Vox, Kind::User] {
                         let mut first = true;
                         for (i, smp) in samples.iter().enumerate().filter(|(_, x)| x.kind == kind) {
                             if first {
                                 ui.label(egui::RichText::new(match kind {
                                     Kind::Drum => "── TR-808 DRUMS ──",
                                     Kind::Riff => "── RIFFS & STABS ──",
-                                    Kind::Rave => "── 90S RAVE SYNTH ──",
+                                    Kind::Rave => "── 90S RAVE ──",
+                                    Kind::Vox => "── VOX & SHOUTS ──",
                                     Kind::User => "── USER SAMPLES ──",
                                 }).color(GREEN).size(10.0));
                                 first = false;
@@ -518,7 +522,7 @@ impl App {
         }
         if let Some(i) = chosen {
             track.sample = i;
-            track.note_len = samples[i].kind.default_len();
+            track.note_len = samples[i].default_len();
             self.shared.preview.lock().unwrap().push((i, track.volume));
         }
 

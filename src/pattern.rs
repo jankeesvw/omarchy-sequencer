@@ -94,7 +94,7 @@ impl Pattern {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
         let row = |name: &str, hits: &[usize], accents: &[usize]| {
             let sample = idx(name);
-            let len = samples[sample].kind.default_len();
+            let len = samples[sample].default_len();
             let mut t = Track::new(sample, len);
             for &h in hits {
                 t.place(h, if accents.contains(&h) { Cell::Accent } else { Cell::On }, len, 16);
@@ -116,30 +116,32 @@ impl Pattern {
         Self { bpm: 124.0, swing: 0.08, steps: 16, master: 0.8, tracks }
     }
 
-    /// Een 138 BPM rave-patroon met lange noten voor stabs, hoover en acid.
+    /// Een 135 BPM rave-patroon met lange noten voor loop, stabs, hoover en acid.
     pub fn rave(samples: &[Sample]) -> Self {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
         let row = |name: &str, notes: &[(usize, u8, bool)], volume: f32| {
             let sample = idx(name);
-            let mut t = Track::new(sample, samples[sample].kind.default_len());
+            let mut t = Track::new(sample, samples[sample].default_len());
             for &(s, len, accent) in notes {
                 t.place(s, if accent { Cell::Accent } else { Cell::On }, len, 32);
             }
             t.volume = volume;
             t
         };
-        let four = |acc: bool| (0..32).step_by(4).map(|s| (s, 1, acc && s % 16 == 0)).collect::<Vec<_>>();
+        let four = (0..32).step_by(4).map(|s| (s, 1, s % 16 == 0)).collect::<Vec<_>>();
         let tracks = vec![
-            row("kick", &four(true), 0.9),
-            row("clap", &[(4, 1, false), (12, 1, false), (20, 1, false), (28, 1, true), (30, 1, false)], 0.7),
-            row("hat_open", &(2..32).step_by(4).map(|s| (s, 1, false)).collect::<Vec<_>>(), 0.45),
-            row("hat_closed", &(0..32).map(|s| (s, 1, s % 4 == 2)).filter(|n| n.0 % 2 == 1).collect::<Vec<_>>(), 0.4),
-            row("hoover", &[(0, 8, true), (16, 6, false), (24, 8, true)], 0.55),
-            row("rave_stab", &[(3, 2, true), (6, 2, false), (10, 4, false), (19, 2, true), (22, 2, false), (26, 4, true)], 0.6),
-            row("acid_303", &[(0, 4, true), (8, 4, false), (12, 4, false), (16, 4, true), (24, 4, false), (28, 4, false)], 0.5),
-            row("m1_organ", &[(2, 1, false), (7, 1, false), (14, 2, false), (18, 1, true), (23, 1, false), (30, 2, false)], 0.55),
+            row("kick", &four, 0.9),
+            row("rave_loop_135", &[(0, 16, false), (16, 16, true)], 0.6),
+            row("hat_open", &(2..32).step_by(4).map(|s| (s, 1, false)).collect::<Vec<_>>(), 0.4),
+            row("clap", &[(4, 1, false), (12, 1, false), (20, 1, false), (28, 1, true)], 0.6),
+            row("hoover", &[(0, 8, true), (24, 8, false)], 0.5),
+            row("rave_stab", &[(3, 2, true), (6, 2, false), (10, 4, false), (19, 2, true), (22, 2, false)], 0.6),
+            row("acid_line", &[(8, 4, false), (12, 4, true), (16, 8, false)], 0.45),
+            row("orch_hit", &[(0, 1, true), (16, 1, false)], 0.5),
+            row("m1_organ", &[(14, 2, false), (30, 2, false)], 0.5),
+            row("everybody", &[(28, 1, false)], 0.7),
         ];
-        Self { bpm: 138.0, swing: 0.0, steps: 32, master: 0.8, tracks }
+        Self { bpm: 135.0, swing: 0.0, steps: 32, master: 0.8, tracks }
     }
 
     pub fn any_solo(&self) -> bool {
@@ -217,7 +219,7 @@ pub fn load(samples: &[Sample]) -> Option<Pattern> {
                 sample,
                 cells,
                 lens: lens.into_iter().map(|l| l.clamp(1, 16)).collect(),
-                note_len: if t.note_len == 0 { samples[sample].kind.default_len() } else { t.note_len.clamp(1, 16) },
+                note_len: if t.note_len == 0 { samples[sample].default_len() } else { t.note_len.clamp(1, 16) },
                 volume: t.volume.clamp(0.0, 1.0),
                 pitch: t.pitch.clamp(-24.0, 24.0),
                 mute: t.mute,

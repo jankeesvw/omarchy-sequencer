@@ -7,28 +7,34 @@ pub struct Sample {
     pub rate: u32,
 }
 
+impl Sample {
+    /// Hoeveel blokjes een nieuwe noot standaard beslaat: loops een hele maat, riffs een tel.
+    pub fn default_len(&self) -> u8 {
+        match self.kind {
+            _ if self.name.contains("loop") => 16,
+            Kind::Riff | Kind::Rave => 4,
+            Kind::Drum | Kind::Vox | Kind::User => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Drum,
     Riff,
     Rave,
+    Vox,
     User,
 }
 
 impl Kind {
-    /// Hoeveel blokjes een nieuwe noot standaard beslaat.
-    pub fn default_len(self) -> u8 {
-        match self {
-            Kind::Drum | Kind::User => 1,
-            Kind::Riff | Kind::Rave => 4,
-        }
-    }
 
     pub fn label(self) -> &'static str {
         match self {
             Kind::Drum => "DRM",
             Kind::Riff => "RIF",
             Kind::Rave => "90S",
+            Kind::Vox => "VOX",
             Kind::User => "USR",
         }
     }
@@ -52,10 +58,18 @@ const RIFFS: [(&str, Kind, &[u8]); 10] = embed!(
     "rhodes_tone", "stab", "neon_pad",
 );
 
-// Zelf gesynthetiseerd met tools/synth90s.py.
-const RAVE: [(&str, Kind, &[u8]); 6] = embed!(
+// Echte opnames van Freesound (CC0), zie README.
+const RAVE: [(&str, Kind, &[u8]); 12] = embed!(
     Kind::Rave,
-    "rave_stab", "hoover", "acid_303", "reese", "m1_organ", "rave_piano",
+    "rave_stab", "jx3p_stab", "orch_hit", "hoover", "hardhouse_hoover", "mentasm", "m1_organ",
+    "house_chords", "acid_line", "acid_bass", "rave_loop_135", "rave_loop_128",
+);
+
+// Producer Space (CC0): dance shouts, house vocals en computerstemmen.
+const VOX: [(&str, Kind, &[u8]); 10] = embed!(
+    Kind::Vox,
+    "everybody", "here_we_go", "lets_go", "hey", "feel_the_rhythm", "clap_your_hands",
+    "access_granted", "security_breach", "system_error", "were_in",
 );
 
 pub fn load_all() -> Vec<Sample> {
@@ -63,6 +77,7 @@ pub fn load_all() -> Vec<Sample> {
         .iter()
         .chain(RIFFS.iter())
         .chain(RAVE.iter())
+        .chain(VOX.iter())
         .filter_map(|(name, kind, bytes)| decode(name, *kind, std::io::Cursor::new(*bytes)))
         .collect();
 
