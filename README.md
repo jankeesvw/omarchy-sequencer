@@ -4,7 +4,7 @@ A step sequencer for [Omarchy](https://omarchy.org). Click a beat together, stre
 
 ![Sequencer playing Late Night in Tokyo Night](media/hero.webp)
 
-**▶ [Watch the trailer, with sound](media/trailer.mp4)**
+**▶ [Watch the one minute trailer, with sound](media/trailer.mp4)**
 
 Built for Omarchy on Hyprland, in Rust.
 
