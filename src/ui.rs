@@ -1332,13 +1332,13 @@ impl eframe::App for App {
 
         let th = self.theme.clone();
         egui::Panel::top("toolbar")
-            .frame(egui::Frame::new().fill(th.bg_dark).inner_margin(egui::Margin::symmetric(12, 10)))
+            .frame(egui::Frame::new().fill(see_through(th.bg_dark)).inner_margin(egui::Margin::symmetric(12, 10)))
             .show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(th.bg_dark).inner_margin(egui::Margin::symmetric(12, 5)))
+            .frame(egui::Frame::new().fill(see_through(th.bg_dark)).inner_margin(egui::Margin::symmetric(12, 5)))
             .show(ui, |ui| self.status(ui));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(th.bg).inner_margin(egui::Margin::symmetric(12, 10)))
+            .frame(egui::Frame::new().fill(see_through(th.bg)).inner_margin(egui::Margin::symmetric(12, 10)))
             .show(ui, |ui| {
                 self.view_h = ui.available_height();
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1387,9 +1387,21 @@ impl eframe::App for App {
         });
     }
 
+    /// The window itself is transparent; the panels paint the (see-through) background.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _ = songs::write(&self.song_name, &self.song, &self.samples);
     }
+}
+
+/// How opaque the window background is; Hyprland blurs what shows through.
+const BACKGROUND_OPACITY: f32 = 0.93;
+
+fn see_through(c: Color32) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (BACKGROUND_OPACITY * 255.0) as u8)
 }
 
 fn delay_name(steps: u8) -> String {

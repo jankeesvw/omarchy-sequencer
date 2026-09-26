@@ -37,6 +37,7 @@ fn main() -> eframe::Result {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("sequencer")
+            .with_transparent(true)
             .with_title("Sequencer")
             .with_inner_size([1400.0, 800.0])
             .with_min_inner_size([1240.0, 420.0]),
