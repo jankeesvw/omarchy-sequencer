@@ -24,9 +24,21 @@ const COLUMNS: [(&str, f32); 11] = [
     ("Len", 36.0),
     ("", 22.0),
 ];
-const COL_GAP: f32 = 6.0;
-const STRIP_W: f32 = 10.0;
-const LEFT_W: f32 = 610.0;
+/// Gap between track controls, the same as between grid cells.
+const COL_GAP: f32 = 3.0;
+const STRIP_W: f32 = 6.0;
+/// Width of the track controls, up to where the grid starts.
+const LEFT_W: f32 = {
+    let mut w = STRIP_W;
+    let mut i = 0;
+    while i < COLUMNS.len() {
+        w += COLUMNS[i].1 + COL_GAP;
+        i += 1;
+    }
+    w + 1.5
+};
+/// Inset of a grid cell (and of every track control) inside its slot.
+const CELL_INSET: f32 = 1.5;
 const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 pub struct App {
@@ -525,11 +537,16 @@ impl App {
         let th = self.theme.clone();
         let steps = self.song.steps();
         let cur = self.song.current;
-        let avail = ui.available_width() - LEFT_W - 12.0;
-        let cell_w = (avail / steps as f32).clamp(14.0, 96.0);
+        // Rows sit as close together as the cells in a row: the only gap is the cell inset.
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let avail = ui.available_width() - LEFT_W - 1.0;
+        // Square cells: the largest size that fits both the width and the height.
         let rows = self.song.tracks.len() as f32;
-        let row_h = ((self.view_h - 70.0) / rows - ui.spacing().item_spacing.y).floor().clamp(30.0, 48.0);
-        let width = LEFT_W + cell_w * steps as f32 + 8.0;
+        let fit_w = avail / steps as f32;
+        let fit_h = (self.view_h - 70.0) / rows;
+        let cell_w = fit_w.min(fit_h).clamp(24.0, 48.0).floor();
+        let row_h = cell_w;
+        let width = LEFT_W + cell_w * steps as f32;
         let playing = self.playing();
         let active = self.shared.active.load(Ordering::Relaxed);
         let playhead = if playing && active == cur { Some(self.shared.step.load(Ordering::Relaxed)) } else { None };
@@ -556,12 +573,9 @@ impl App {
         let mut move_up = None;
         for ti in 0..self.song.tracks.len() {
             let (row, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
-            if ti == self.selected {
-                ui.painter().rect_filled(Rect::from_min_size(row.min, Vec2::new(LEFT_W - 8.0, row_h - 4.0)), CornerRadius::ZERO, th.selection);
-            }
-            self.track_controls(ui, ti, Rect::from_min_size(row.min, Vec2::new(LEFT_W - 8.0, row_h - 4.0)), &mut remove, &mut move_up);
+            self.track_controls(ui, ti, Rect::from_min_size(row.min, Vec2::new(LEFT_W, row_h)), &mut remove, &mut move_up);
 
-            let cells = Rect::from_min_size(row.min + Vec2::new(LEFT_W, 0.0), Vec2::new(cell_w * steps as f32, row_h - 4.0));
+            let cells = Rect::from_min_size(row.min + Vec2::new(LEFT_W, 0.0), Vec2::new(cell_w * steps as f32, row_h));
             let resp = ui.interact(cells, ui.id().with(("cells", ti)), Sense::click_and_drag());
             let hit = |pos: Pos2| (((pos.x - cells.left()) / cell_w).floor().max(0.0) as usize).min(steps - 1);
 
@@ -625,7 +639,7 @@ impl App {
             let color = self.kind_color(self.samples[track.sample].kind);
             let dead = if self.song.any_solo() { !track.solo } else { track.mute };
             for s in 0..steps {
-                let r = Rect::from_min_size(Pos2::new(cells.left() + cell_w * s as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(1.5);
+                let r = Rect::from_min_size(Pos2::new(cells.left() + cell_w * s as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
                 let beat = (s / 4) % 2 == 0;
                 let mut base = if beat { th.bg_light } else { th.bg_dark };
                 if playhead == Some(s) {
@@ -640,7 +654,7 @@ impl App {
                     Cell::Accent => true,
                 };
                 let len = (lane.lens[n] as usize).min(steps - n);
-                let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(1.5);
+                let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
                 let sounding = playhead.is_some_and(|h| h >= n && h < n + len) && !dead;
                 let mut c = if accent { color } else { color.gamma_multiply(0.7) };
                 if dead {
@@ -678,19 +692,21 @@ impl App {
         let th = self.theme.clone();
         let samples = self.samples.clone();
         let kind_color = self.kind_color(samples[self.song.tracks[ti].sample].kind);
-        let cy = rect.center().y;
+        // Every control is exactly as tall as a grid cell and sits on the same line.
+        let top = rect.top() + CELL_INSET;
+        let h = rect.height() - 2.0 * CELL_INSET;
         let mut x = rect.left() + STRIP_W;
         let mut col = 0;
         let mut next = |_: f32| {
             let w = COLUMNS[col].1;
             col += 1;
-            let r = Rect::from_min_size(Pos2::new(x, cy - 13.0), Vec2::new(w, 26.0));
+            let r = Rect::from_min_size(Pos2::new(x, top), Vec2::new(w, h));
             x += w + COL_GAP;
             r
         };
 
         // Color strip with level meter.
-        let strip = Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
+        let strip = Rect::from_min_size(Pos2::new(rect.left(), top), Vec2::new(3.0, h));
         let lvl = self.shared.level(ti).max(self.meters[ti]);
         self.meters[ti] = lvl * 0.86;
         self.shared.levels[ti].store(0f32.to_bits(), Ordering::Relaxed);
@@ -699,7 +715,9 @@ impl App {
 
         let num = next(20.0);
         let num_resp = ui.interact(num, ui.id().with(("num", ti)), Sense::click()).on_hover_text("click: select and preview · right-click: move up");
-        ui.painter().text(num.center(), Align2::CENTER_CENTER, format!("{}", ti + 1), FontId::monospace(12.0), if num_resp.hovered() { th.fg_bright } else { th.fg_dim });
+        let selected = self.selected == ti;
+        ui.painter().rect_filled(num, CornerRadius::ZERO, if selected { th.accent } else if num_resp.hovered() { th.selection } else { th.bg_light });
+        ui.painter().text(num.center(), Align2::CENTER_CENTER, format!("{}", ti + 1), FontId::monospace(12.0), if selected { th.bg } else if num_resp.hovered() { th.fg_bright } else { th.fg_dim });
         if num_resp.clicked() {
             self.selected = ti;
             let t = &self.song.tracks[ti];
@@ -713,8 +731,9 @@ impl App {
         let mut chosen = None;
         let current = self.song.tracks[ti].sample;
         let mut combo_ui = ui.new_child(egui::UiBuilder::new().max_rect(combo_rect).id_salt(("combo", ti)));
+        combo_ui.spacing_mut().interact_size.y = h;
         egui::ComboBox::from_id_salt(("sample", ti))
-            .width(COLUMNS[1].1 - 4.0)
+            .width(COLUMNS[1].1)
             .height(480.0)
             .selected_text(egui::RichText::new(samples[current].name.replace('_', " ")).color(th.fg_bright))
             .show_ui(&mut combo_ui, |ui| {
@@ -811,6 +830,7 @@ impl App {
 
         let x_rect = next(18.0);
         let xr = ui.interact(x_rect, ui.id().with(("x", ti)), Sense::click()).on_hover_text("remove track");
+        ui.painter().rect_filled(x_rect, CornerRadius::ZERO, if xr.hovered() { th.selection } else { th.bg_light });
         ui.painter().text(x_rect.center(), Align2::CENTER_CENTER, "×", FontId::monospace(15.0), if xr.hovered() { th.red } else { th.fg_dim });
         if xr.clicked() {
             *remove = Some(ti);
@@ -986,11 +1006,11 @@ fn bar_control(ui: &mut egui::Ui, th: &Theme, rect: Rect, value: &mut f32, min: 
     }
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::ZERO, if resp.hovered() { th.selection } else { th.bg_light });
-    let inner = rect.shrink2(Vec2::new(0.0, 7.0));
+    let inner = Rect::from_center_size(rect.center(), Vec2::new(rect.width() - 8.0, 10.0));
     let x = |v: f32| inner.left() + inner.width() * (v - min) / (max - min);
     let from = if min < 0.0 { x(0.0) } else { inner.left() };
     if min < 0.0 {
-        p.line_segment([Pos2::new(from, rect.top() + 4.0), Pos2::new(from, rect.bottom() - 4.0)], Stroke::new(1.0, th.fg_dim));
+        p.line_segment([Pos2::new(from, inner.top() - 3.0), Pos2::new(from, inner.bottom() + 3.0)], Stroke::new(1.0, th.fg_dim));
     }
     let to = x(*value);
     p.rect_filled(Rect::from_x_y_ranges(from.min(to)..=from.max(to).max(from.min(to) + 2.0), inner.y_range()), CornerRadius::ZERO, color);
