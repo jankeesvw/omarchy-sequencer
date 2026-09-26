@@ -509,9 +509,6 @@ impl App {
                     self.select_pattern(p, true);
                 }
             }
-            if ui.add(button("Clear")).on_hover_text("clear this pattern [C] · undo with Ctrl+Z").clicked() {
-                self.clear_pattern();
-            }
             // More pattern actions.
             egui::containers::menu::MenuButton::from_button(button("⋯")).ui(ui, |ui| {
                 if ui.button("Random pattern  [R]").clicked() {
@@ -542,8 +539,8 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if ui.add(button("Export")).on_hover_text("the current pattern 4 times to a WAV in ~/Music [Ctrl+E]").clicked() {
-                    self.export();
+                if ui.add(button("Clear")).on_hover_text("clear this pattern [C] · undo with Ctrl+Z").clicked() {
+                    self.clear_pattern();
                 }
                 if ui.add(button("Songs")).on_hover_text("open, create and delete songs [Ctrl+O]").clicked() {
                     self.songs_open = !self.songs_open;
@@ -555,6 +552,9 @@ impl App {
                     .min_size(Vec2::new(CONTROL_H, CONTROL_H));
                 if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and volume").clicked() {
                     self.settings_open = !self.settings_open;
+                }
+                if ui.add(button("Export")).on_hover_text("the current pattern 4 times to a WAV in ~/Music [Ctrl+E]").clicked() {
+                    self.export();
                 }
                 section_gap(ui);
                 if ui.add_enabled(!self.redo.is_empty(), button("↷")).on_hover_text("redo [Ctrl+Shift+Z]").clicked() {
