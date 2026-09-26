@@ -69,8 +69,6 @@ pub struct Engine {
     scope_buf: Vec<f32>,
     delay: Vec<[f32; 2]>,
     delay_pos: usize,
-    filter: [[f32; 2]; 2],
-    cutoff: f32,
     /// Per track: what the voices played this frame, and the state of its effects.
     bus: [[f32; 2]; MAX_TRACKS],
     fx: [FxState; MAX_TRACKS],
@@ -290,8 +288,6 @@ impl Engine {
             scope_buf: Vec::with_capacity(SCOPE_LEN),
             delay: vec![[0.0; 2]; out_rate as usize * 3],
             delay_pos: 0,
-            filter: [[0.0; 2]; 2],
-            cutoff: 1.0,
             bus: [[0.0; 2]; MAX_TRACKS],
             fx: [FxState::default(); MAX_TRACKS],
             reverb: Reverb::new(out_rate),
@@ -404,8 +400,6 @@ impl Engine {
         let step_len = self.step_len(song.bpm);
         let delay_len = ((song.delay_steps as f64 * self.step_len(song.bpm)) as usize).clamp(1, self.delay.len() - 1);
         let feedback = song.feedback;
-        let target_cutoff = song.cutoff;
-        let nyquist_guard = self.out_rate as f32 / 6.0;
 
         for frame in out.chunks_mut(2) {
             if playing {
@@ -481,19 +475,6 @@ impl Engine {
             l += dl * 0.8;
             r += dr * 0.8;
 
-            // Master lowpass (state variable); the cutoff glides to avoid clicks.
-            self.cutoff += (target_cutoff - self.cutoff) * 0.001;
-            if self.cutoff < 0.995 {
-                let hz = 60.0 * (20_000.0f32 / 60.0).powf(self.cutoff);
-                let f = 2.0 * (std::f32::consts::PI * hz.min(nyquist_guard) / self.out_rate as f32).sin();
-                for (ch, x) in [&mut l, &mut r].into_iter().enumerate() {
-                    let [low, band] = &mut self.filter[ch];
-                    *low += f * *band;
-                    let high = *x - *low - 0.6 * *band;
-                    *band += f * high;
-                    *x = *low;
-                }
-            }
             // Soft clipper on the master.
             frame[0] = (l * master * 1.4).tanh();
             frame[1] = (r * master * 1.4).tanh();

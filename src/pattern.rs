@@ -222,8 +222,6 @@ pub struct Song {
     pub bpm: f32,
     pub swing: f32,
     pub master: f32,
-    /// Master lowpass, 0..1 (1 = open).
-    pub cutoff: f32,
     /// Delay time in sixteenth notes.
     pub delay_steps: u8,
     pub feedback: f32,
@@ -242,7 +240,6 @@ impl Song {
             bpm,
             swing: 0.0,
             master: 0.8,
-            cutoff: 1.0,
             delay_steps: 3,
             feedback: 0.35,
             steps: vec![steps; PATTERNS],
@@ -367,7 +364,6 @@ impl Song {
         self.bpm = self.bpm.clamp(40.0, 300.0);
         self.swing = self.swing.clamp(0.0, 0.5);
         self.master = self.master.clamp(0.0, 1.0);
-        self.cutoff = self.cutoff.clamp(0.0, 1.0);
         self.feedback = self.feedback.clamp(0.0, 0.9);
         self.delay_steps = self.delay_steps.clamp(1, 16);
     }

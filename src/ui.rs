@@ -600,15 +600,6 @@ impl App {
                     ui.add(egui::Slider::new(&mut song.swing, 0.0..=0.5).custom_formatter(|v, _| format!("{:.0}%", v * 200.0)));
                     ui.end_row();
                 });
-                section(ui, &th, "Filter");
-                egui::Grid::new("master_filter").num_columns(2).show(ui, |ui| {
-                    row_label(ui, &th, "Lowpass");
-                    ui.add(egui::Slider::new(&mut song.cutoff, 0.0..=1.0).custom_formatter(|v, _| {
-                        if v >= 0.995 { "open".into() } else { format!("{:.0} Hz", 60.0 * (20_000.0f64 / 60.0).powf(v)) }
-                    }))
-                    .on_hover_text("a lowpass over the whole mix, for sweeps");
-                    ui.end_row();
-                });
                 section(ui, &th, "Delay");
                 egui::Grid::new("master_delay").num_columns(2).show(ui, |ui| {
                     row_label(ui, &th, "Time");
