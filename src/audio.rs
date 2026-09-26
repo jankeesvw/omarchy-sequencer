@@ -413,8 +413,9 @@ impl Engine {
                     self.step(&song);
                 }
                 self.until_next -= 1.0;
-                self.clock += 1.0;
             }
+            // Runs while stopped too, so chop is heard in a preview.
+            self.clock += 1.0;
             let (mut l, mut r, mut send_l, mut send_r) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
             self.bus = [[0.0; 2]; MAX_TRACKS];
             for v in self.voices.iter_mut() {

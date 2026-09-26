@@ -68,6 +68,9 @@ pub struct App {
     tab: Option<bool>,
     /// The track whose effects window is open, and where it opens.
     fx_open: Option<(usize, Pos2)>,
+    /// Looping preview in the effects window: when the next one plays, and the pause in between.
+    fx_loop: Option<Instant>,
+    fx_gap: f32,
 }
 
 impl App {
@@ -101,6 +104,8 @@ impl App {
             export_result: Arc::new(Mutex::new(None)),
             tab: None,
             fx_open: None,
+            fx_loop: None,
+            fx_gap: 1.0,
         }
     }
 
@@ -812,6 +817,7 @@ impl App {
         }
         if fresp.clicked() {
             self.fx_open = if open { None } else { Some((ti, fx_rect.right_top() + Vec2::new(8.0, 0.0))) };
+            self.fx_loop = None;
         }
         let t = &mut self.song.tracks[ti];
 
@@ -968,6 +974,18 @@ impl App {
                     if ui.add(egui::Button::new("▶  Preview").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
                         preview = true;
                     }
+                    let looping = self.fx_loop.is_some();
+                    let loop_button = egui::Button::new(egui::RichText::new("⟳  Loop").color(if looping { th.bg } else { th.fg }))
+                        .fill(if looping { th.accent } else { th.bg_light })
+                        .min_size(Vec2::new(0.0, CONTROL_H));
+                    if ui.add(loop_button).on_hover_text("play the sample again and again, with a pause in between").clicked() {
+                        self.fx_loop = if looping { None } else { Some(Instant::now()) };
+                    }
+                    ui.label(egui::RichText::new("pause").color(th.fg_dim).size(12.0));
+                    for gap in [0.5f32, 1.0, 2.0] {
+                        ui.selectable_value(&mut self.fx_gap, gap, format!("{gap} s"));
+                    }
+                    ui.add_space(12.0);
                     if ui.add(egui::Button::new("Reset").min_size(Vec2::new(0.0, CONTROL_H))).on_hover_text("turn every effect off").clicked() {
                         t.fx = Fx::default();
                         t.send = 0.0;
@@ -975,12 +993,24 @@ impl App {
                     }
                 });
             });
+        // Looping preview: the whole sample (at its pitch), then the pause, then again.
+        if let Some(next) = self.fx_loop {
+            if Instant::now() >= next {
+                preview = true;
+                let t = &self.song.tracks[ti];
+                let s = &self.samples[t.sample];
+                let pitch = t.pitch + t.fx.fine / 100.0;
+                let length = s.data.len() as f32 / s.rate as f32 / 2f32.powf(pitch / 12.0);
+                self.fx_loop = Some(Instant::now() + Duration::from_secs_f32(length.max(0.1) + self.fx_gap));
+            }
+        }
         if preview {
             let t = &self.song.tracks[ti];
             self.shared.preview.lock().unwrap().push((t.sample, t.volume, Some(ti)));
         }
         if !open {
             self.fx_open = None;
+            self.fx_loop = None;
         }
     }
 
@@ -1090,7 +1120,7 @@ impl eframe::App for App {
         }
         // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
         // Input still triggers an immediate repaint.
-        let busy = self.playing() || self.recorder.recording() || self.meters.iter().any(|m| *m > 0.01);
+        let busy = self.playing() || self.recorder.recording() || self.fx_loop.is_some() || self.meters.iter().any(|m| *m > 0.01);
         ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 
