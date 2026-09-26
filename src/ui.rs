@@ -544,7 +544,7 @@ impl App {
                 let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", self.song_name)).color(if settings_open { th.bg } else { th.fg_bright }))
                     .fill(if settings_open { th.accent } else { th.bg_light })
                     .min_size(Vec2::new(CONTROL_H, CONTROL_H));
-                if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and the mix").clicked() {
+                if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and volume").clicked() {
                     self.settings_open = !self.settings_open;
                 }
                 section_gap(ui);
@@ -600,20 +600,6 @@ impl App {
                     ui.add(egui::Slider::new(&mut song.swing, 0.0..=0.5).custom_formatter(|v, _| format!("{:.0}%", v * 200.0)));
                     ui.end_row();
                 });
-                section(ui, &th, "Delay");
-                egui::Grid::new("master_delay").num_columns(2).show(ui, |ui| {
-                    row_label(ui, &th, "Time");
-                    ui.horizontal(|ui| {
-                        for d in [1u8, 2, 3, 4, 6, 8] {
-                            ui.selectable_value(&mut song.delay_steps, d, delay_name(d));
-                        }
-                    });
-                    ui.end_row();
-                    row_label(ui, &th, "Feedback");
-                    ui.add(egui::Slider::new(&mut song.feedback, 0.0..=0.85).custom_formatter(|v, _| format!("{:.0}%", v / 0.85 * 100.0)));
-                    ui.end_row();
-                });
-                ui.label(egui::RichText::new("How much of each track goes in: Delay in its FX window.").color(th.fg_dim).size(11.0));
                 section(ui, &th, "Volume");
                 egui::Grid::new("master_out").num_columns(2).show(ui, |ui| {
                     row_label(ui, &th, "Master");
@@ -1046,12 +1032,26 @@ impl App {
                     ui.end_row();
                 });
 
-                section(ui, &th, "Sends");
-                egui::Grid::new("fx_sends").num_columns(2).show(ui, |ui| {
-                    row_label(ui, &th, "Delay");
+                section(ui, &th, "Delay");
+                egui::Grid::new("fx_delay").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Amount");
                     ui.add(amount(&mut t.send));
                     ui.end_row();
-                    row_label(ui, &th, "Reverb");
+                    row_label(ui, &th, "Time");
+                    ui.horizontal(|ui| {
+                        for d in [1u8, 2, 3, 4, 6, 8] {
+                            ui.selectable_value(&mut t.fx.delay_steps, d, delay_name(d));
+                        }
+                    });
+                    ui.end_row();
+                    row_label(ui, &th, "Feedback");
+                    ui.add(egui::Slider::new(&mut t.fx.feedback, 0.0..=0.85).custom_formatter(|v, _| format!("{:.0}%", v / 0.85 * 100.0)));
+                    ui.end_row();
+                });
+
+                section(ui, &th, "Reverb");
+                egui::Grid::new("fx_reverb").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Amount");
                     ui.add(amount(&mut t.fx.reverb));
                     ui.end_row();
                 });

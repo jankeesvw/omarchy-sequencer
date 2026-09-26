@@ -67,8 +67,8 @@ pub struct Engine {
     active: usize,
     was_playing: bool,
     scope_buf: Vec<f32>,
-    delay: Vec<[f32; 2]>,
-    delay_pos: usize,
+    /// One ping-pong delay line per track.
+    delays: Vec<Delay>,
     /// Per track: what the voices played this frame, and the state of its effects.
     bus: [[f32; 2]; MAX_TRACKS],
     fx: [FxState; MAX_TRACKS],
@@ -234,6 +234,38 @@ impl FxState {
     }
 }
 
+/// Tempo synced ping-pong delay for one track.
+struct Delay {
+    buf: Vec<[f32; 2]>,
+    pos: usize,
+    /// Frames since anything went in, so an idle delay costs nothing.
+    idle: usize,
+}
+
+impl Delay {
+    fn new(rate: u32) -> Self {
+        Self { buf: vec![[0.0; 2]; rate as usize * 3], pos: 0, idle: usize::MAX }
+    }
+
+    fn process(&mut self, input: [f32; 2], len: usize, feedback: f32) -> [f32; 2] {
+        if input == [0.0; 2] {
+            // Silent input and the echoes have died out: nothing to do.
+            if self.idle > self.buf.len() * 8 {
+                return [0.0; 2];
+            }
+            self.idle = self.idle.saturating_add(1);
+        } else {
+            self.idle = 0;
+        }
+        let len = len.clamp(1, self.buf.len() - 1);
+        let read = (self.pos + self.buf.len() - len) % self.buf.len();
+        let [dl, dr] = self.buf[read];
+        self.buf[self.pos] = [input[0] + dr * feedback, input[1] + dl * feedback];
+        self.pos = (self.pos + 1) % self.buf.len();
+        [dl * 0.8, dr * 0.8]
+    }
+}
+
 /// A small Freeverb style reverb: parallel combs into series allpasses, per channel.
 struct Reverb {
     combs: [[(Vec<f32>, usize, f32); 4]; 2],
@@ -286,8 +318,7 @@ impl Engine {
             active: 0,
             was_playing: false,
             scope_buf: Vec::with_capacity(SCOPE_LEN),
-            delay: vec![[0.0; 2]; out_rate as usize * 3],
-            delay_pos: 0,
+            delays: (0..MAX_TRACKS).map(|_| Delay::new(out_rate)).collect(),
             bus: [[0.0; 2]; MAX_TRACKS],
             fx: [FxState::default(); MAX_TRACKS],
             reverb: Reverb::new(out_rate),
@@ -398,8 +429,6 @@ impl Engine {
 
         let master = song.master;
         let step_len = self.step_len(song.bpm);
-        let delay_len = ((song.delay_steps as f64 * self.step_len(song.bpm)) as usize).clamp(1, self.delay.len() - 1);
-        let feedback = song.feedback;
 
         for frame in out.chunks_mut(2) {
             if playing {
@@ -410,7 +439,7 @@ impl Engine {
             }
             // Runs while stopped too, so chop is heard in a preview.
             self.clock += 1.0;
-            let (mut l, mut r, mut send_l, mut send_r) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            let (mut l, mut r) = (0.0f32, 0.0f32);
             self.bus = [[0.0; 2]; MAX_TRACKS];
             for v in self.voices.iter_mut() {
                 let data = &self.samples[v.sample].data;
@@ -457,8 +486,9 @@ impl Engine {
                 let [tl, tr] = self.fx[i].process(&t.fx, self.bus[i], self.out_rate as f32, beat);
                 l += tl;
                 r += tr;
-                send_l += tl * t.send;
-                send_r += tr * t.send;
+                let [dl, dr] = self.delays[i].process([tl * t.send, tr * t.send], (t.fx.delay_steps as f64 * step_len) as usize, t.fx.feedback);
+                l += dl;
+                r += dr;
                 rev_l += tl * t.fx.reverb;
                 rev_r += tr * t.fx.reverb;
             }
@@ -466,14 +496,6 @@ impl Engine {
             l += wl;
             r += wr;
             self.voices.retain(|v| (v.gain_l > 0.0 || v.gain_r > 0.0) && v.fade.is_none_or(|f| f > 0.0));
-
-            // Tempo synced ping-pong delay.
-            let read = (self.delay_pos + self.delay.len() - delay_len) % self.delay.len();
-            let [dl, dr] = self.delay[read];
-            self.delay[self.delay_pos] = [send_l + dr * feedback, send_r + dl * feedback];
-            self.delay_pos = (self.delay_pos + 1) % self.delay.len();
-            l += dl * 0.8;
-            r += dr * 0.8;
 
             // Soft clipper on the master.
             frame[0] = (l * master * 1.4).tanh();

@@ -115,6 +115,9 @@ pub struct Fx {
     pub chop_steps: u8,
     /// Send to the reverb.
     pub reverb: f32,
+    /// Delay time in sixteenth notes and how much of it comes back. The amount is `Track::send`.
+    pub delay_steps: u8,
+    pub feedback: f32,
     /// Three band EQ in dB: low shelf (100 Hz), mid peak (1 kHz), high shelf (8 kHz).
     pub eq_low: f32,
     pub eq_mid: f32,
@@ -138,6 +141,8 @@ impl Default for Fx {
             chop: 0.0,
             chop_steps: 1,
             reverb: 0.0,
+            delay_steps: 3,
+            feedback: 0.35,
             eq_low: 0.0,
             eq_mid: 0.0,
             eq_high: 0.0,
@@ -175,6 +180,8 @@ impl Fx {
         self.chop = self.chop.clamp(0.0, 1.0);
         self.chop_steps = self.chop_steps.clamp(1, 8);
         self.reverb = self.reverb.clamp(0.0, 1.0);
+        self.delay_steps = self.delay_steps.clamp(1, 16);
+        self.feedback = self.feedback.clamp(0.0, 0.9);
         self.eq_low = self.eq_low.clamp(-12.0, 12.0);
         self.eq_mid = self.eq_mid.clamp(-12.0, 12.0);
         self.eq_high = self.eq_high.clamp(-12.0, 12.0);
@@ -222,9 +229,6 @@ pub struct Song {
     pub bpm: f32,
     pub swing: f32,
     pub master: f32,
-    /// Delay time in sixteenth notes.
-    pub delay_steps: u8,
-    pub feedback: f32,
     /// Number of steps per pattern.
     pub steps: Vec<usize>,
     /// The pattern that plays and that you edit.
@@ -240,8 +244,6 @@ impl Song {
             bpm,
             swing: 0.0,
             master: 0.8,
-            delay_steps: 3,
-            feedback: 0.35,
             steps: vec![steps; PATTERNS],
             current: 0,
             queued: None,
@@ -364,8 +366,6 @@ impl Song {
         self.bpm = self.bpm.clamp(40.0, 300.0);
         self.swing = self.swing.clamp(0.0, 0.5);
         self.master = self.master.clamp(0.0, 1.0);
-        self.feedback = self.feedback.clamp(0.0, 0.9);
-        self.delay_steps = self.delay_steps.clamp(1, 16);
     }
 
     pub fn any_solo(&self) -> bool {
