@@ -8,7 +8,7 @@ pub struct Sample {
 }
 
 impl Sample {
-    /// Hoeveel blokjes een nieuwe noot standaard beslaat: loops een hele maat, riffs een tel.
+    /// How many steps a new note spans by default: loops a whole bar, riffs one beat.
     pub fn default_len(&self) -> u8 {
         match self.kind {
             _ if self.name.contains("loop") => 16,
@@ -46,14 +46,14 @@ const RIFFS: [(&str, Kind, &[u8]); 10] = embed!(
     "rhodes_tone", "stab", "neon_pad",
 );
 
-// Echte opnames van Freesound (CC0), zie README.
+// Real recordings from Freesound (CC0), see README.
 const RAVE: [(&str, Kind, &[u8]); 12] = embed!(
     Kind::Rave,
     "rave_stab", "jx3p_stab", "orch_hit", "hoover", "hardhouse_hoover", "mentasm", "m1_organ",
     "house_chords", "acid_line", "acid_bass", "rave_loop_135", "rave_loop_128",
 );
 
-// Producer Space (CC0): dance shouts, house vocals en computerstemmen.
+// Producer Space (CC0): dance shouts, house vocals and computer voices.
 const VOX: [(&str, Kind, &[u8]); 10] = embed!(
     Kind::Vox,
     "everybody", "here_we_go", "lets_go", "hey", "feel_the_rhythm", "clap_your_hands",
@@ -69,7 +69,7 @@ pub fn load_all() -> Vec<std::sync::Arc<Sample>> {
         .filter_map(|(name, kind, bytes)| decode(name, *kind, std::io::Cursor::new(*bytes)))
         .collect();
 
-    // Eigen samples: gooi .wav bestanden in ~/.local/share/sequencer/samples
+    // Your own samples: drop .wav files in ~/.local/share/sequencer/samples
     if let Some(dir) = user_sample_dir() {
         let mut paths: Vec<_> = std::fs::read_dir(&dir)
             .into_iter()
@@ -116,12 +116,12 @@ fn decode<R: std::io::Read>(name: &str, kind: Kind, reader: R) -> Option<Sample>
     Some(Sample { name: name.to_string(), kind, data, rate: spec.sample_rate })
 }
 
-/// Maakt van een ruwe microfoonopname een bruikbare sample: stilte eraf, genormaliseerd,
-/// opgeslagen als `rec_NN.wav` in de map met eigen samples.
+/// Turns a raw microphone recording into a usable sample: silence trimmed, normalized,
+/// saved as `rec_NN.wav` in the user sample folder.
 pub fn save_recording(raw: &[f32], rate: u32) -> Result<Sample, String> {
     let peak = raw.iter().fold(0.0f32, |m, s| m.max(s.abs()));
     if peak < 0.01 {
-        return Err("niets gehoord, staat de microfoon aan?".into());
+        return Err("nothing heard, is the microphone on?".into());
     }
     let threshold = (peak * 0.06).max(0.005);
     let first = raw.iter().position(|s| s.abs() > threshold).unwrap_or(0);
@@ -135,7 +135,7 @@ pub fn save_recording(raw: &[f32], rate: u32) -> Result<Sample, String> {
         data[n - 1 - i] *= i as f32 / fade as f32;
     }
 
-    let dir = user_sample_dir().ok_or("geen data dir")?;
+    let dir = user_sample_dir().ok_or("no data dir")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let name = (1..)
         .map(|i| format!("rec_{i:02}"))

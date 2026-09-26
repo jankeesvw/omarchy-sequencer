@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installeert Sequencer als gewone app, zodat hij in de Omarchy launcher (Super + Space) staat.
+# Installs Sequencer as a regular app, so it shows up in the Omarchy launcher (Super + Space).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -13,5 +13,5 @@ install -Dm644 packaging/sequencer.svg ~/.local/share/icons/hicolor/scalable/app
 mkdir -p ~/.local/share/sequencer/samples
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
 
-echo "Sequencer geïnstalleerd. Start via Super + Space → 'Sequencer', of 'sequencer' in een terminal."
-echo "Eigen .wav samples? Zet ze in ~/.local/share/sequencer/samples"
+echo "Sequencer installed. Launch it with Super + Space → 'Sequencer', or run 'sequencer' in a terminal."
+echo "Your own .wav samples go in ~/.local/share/sequencer/samples"

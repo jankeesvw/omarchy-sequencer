@@ -2,7 +2,7 @@
 Type=Application
 Name=Sequencer
 GenericName=Step Sequencer
-Comment=Step sequencer met drums, riffs en eigen opnames
+Comment=Step sequencer with drums, riffs and your own recordings
 Exec=sequencer
 Icon=sequencer
 Terminal=false

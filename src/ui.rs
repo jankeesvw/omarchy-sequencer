@@ -9,7 +9,24 @@ use crate::pattern::{self, Cell, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
 use crate::samples::{self, Kind, Sample};
 use crate::theme::{self, Theme};
 
-const LEFT_W: f32 = 540.0;
+const CONTROL_H: f32 = 28.0;
+/// Track control columns: header, width.
+const COLUMNS: [(&str, f32); 11] = [
+    ("", 22.0),
+    ("Sample", 150.0),
+    ("M", 26.0),
+    ("S", 26.0),
+    ("Rec", 26.0),
+    ("Vol", 56.0),
+    ("Pan", 56.0),
+    ("FX", 56.0),
+    ("Pitch", 40.0),
+    ("Len", 36.0),
+    ("", 22.0),
+];
+const COL_GAP: f32 = 6.0;
+const STRIP_W: f32 = 10.0;
+const LEFT_W: f32 = 610.0;
 const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 pub struct App {
@@ -106,11 +123,11 @@ impl App {
                 t.lanes[p] = t.lanes[from].clone();
             }
             self.song.steps[p] = self.song.steps[from];
-            self.say(format!("patroon {} gekopieerd naar {}", PATTERN_NAMES[from], PATTERN_NAMES[p]));
+            self.say(format!("copied pattern {} to {}", PATTERN_NAMES[from], PATTERN_NAMES[p]));
             return;
         }
         if self.playing() && p != self.song.current {
-            // Tijdens het spelen wisselt het patroon op de maatgrens.
+            // While playing, the pattern switches at the end of the bar.
             self.song.queued = Some(p);
         } else {
             self.song.current = p;
@@ -120,7 +137,7 @@ impl App {
 
     fn add_track(&mut self) {
         if self.song.tracks.len() >= MAX_TRACKS {
-            self.say("maximaal 16 tracks");
+            self.say("at most 16 tracks");
             return;
         }
         let used: Vec<usize> = self.song.tracks.iter().map(|t| t.sample).collect();
@@ -155,7 +172,7 @@ impl App {
                 }
             }
         }
-        self.say("willekeurig patroon gemaakt");
+        self.say("random pattern generated");
     }
 
     fn clear_pattern(&mut self) {
@@ -163,7 +180,7 @@ impl App {
         for t in &mut self.song.tracks {
             t.lanes[cur].clear();
         }
-        self.say(format!("patroon {} gewist", PATTERN_NAMES[cur]));
+        self.say(format!("cleared pattern {}", PATTERN_NAMES[cur]));
     }
 
     fn tap(&mut self) {
@@ -180,9 +197,9 @@ impl App {
         match pattern::save(&self.song, &self.samples) {
             Ok(()) => {
                 self.saved = self.song.clone();
-                self.say("opgeslagen in ~/.config/sequencer/song.json");
+                self.say("saved to ~/.config/sequencer/song.json");
             }
-            Err(e) => self.say(format!("opslaan mislukt: {e}")),
+            Err(e) => self.say(format!("saving failed: {e}")),
         }
         self.last_save = Instant::now();
     }
@@ -191,11 +208,11 @@ impl App {
         let samples = self.samples.clone();
         let song = self.song.clone();
         let result = self.export_result.clone();
-        self.say("exporteren…");
+        self.say("exporting…");
         std::thread::spawn(move || {
             let msg = match audio::export(samples, &song, 4) {
-                Ok(path) => format!("geëxporteerd naar {}", path.display()),
-                Err(e) => format!("export mislukt: {e}"),
+                Ok(path) => format!("exported to {}", path.display()),
+                Err(e) => format!("export failed: {e}"),
             };
             *result.lock().unwrap() = Some(msg);
         });
@@ -210,7 +227,7 @@ impl App {
                 self.rec_track = Some(track);
                 self.selected = track;
             }
-            Err(e) => self.say(format!("opnemen lukt niet: {e}")),
+            Err(e) => self.say(format!("cannot record: {e}")),
         }
     }
 
@@ -230,14 +247,14 @@ impl App {
                     t.pitch = 0.0;
                 }
                 self.shared.preview.lock().unwrap().push((idx, 0.8));
-                self.say(format!("opgenomen: {name} (staat in ~/.local/share/sequencer/samples)"));
+                self.say(format!("recorded {name} (saved in ~/.local/share/sequencer/samples)"));
             }
-            Err(e) => self.say(format!("opname niet bewaard: {e}")),
+            Err(e) => self.say(format!("recording not saved: {e}")),
         }
     }
 
     fn history(&mut self, pointer_down: bool) {
-        // Een wijziging telt als één stap zodra je de muis loslaat; wisselen van patroon hoort er niet bij.
+        // A change counts as one undo step once the mouse is released; switching patterns is not part of it.
         let mut a = self.song.clone();
         let mut b = self.committed.clone();
         a.current = 0;
@@ -261,7 +278,7 @@ impl App {
             to.push(self.song.clone());
             self.song = prev.clone();
             self.committed = prev;
-            self.say(if redo { "opnieuw" } else { "ongedaan gemaakt" });
+            self.say(if redo { "redone" } else { "undone" });
         }
     }
 
@@ -280,7 +297,7 @@ impl App {
         if pressed(Space) {
             self.toggle_play();
         }
-        // Tab / Shift+Tab kiest de track waar V naartoe opneemt (onderschept in raw_input_hook).
+        // Tab / Shift+Tab selects the track that V records into (intercepted in raw_input_hook).
         if let Some(back) = self.tab.take() {
             let n = self.song.tracks.len();
             self.selected = if back { (self.selected + n - 1) % n } else { (self.selected + 1) % n };
@@ -323,7 +340,7 @@ impl App {
                 self.tap();
             }
         }
-        // 1-9 zet track 1 t/m 9 op mute, F1-F8 kiest patroon A-H (met shift: kopieer ernaartoe).
+        // 1-9 mutes tracks 1 to 9, F1-F8 selects pattern A-H (with shift: copy to it).
         for (i, k) in [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9].into_iter().enumerate() {
             if !ctrl && pressed(k) {
                 if let Some(t) = self.song.tracks.get_mut(i) {
@@ -340,28 +357,29 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let th = self.theme.clone();
+        ui.spacing_mut().interact_size.y = CONTROL_H;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let playing = self.playing();
             let play = egui::Button::new(egui::RichText::new(if playing { "■  Stop" } else { "▶  Play" }).color(th.bg).strong())
                 .fill(if playing { th.red } else { th.accent })
-                .min_size(Vec2::new(84.0, 26.0));
+                .min_size(Vec2::new(96.0, CONTROL_H));
             if ui.add(play).clicked() {
                 self.toggle_play();
             }
-            ui.add_space(10.0);
+            section_gap(ui);
             label(ui, &th, "BPM");
-            ui.add(egui::DragValue::new(&mut self.song.bpm).range(40.0..=300.0).speed(0.5).fixed_decimals(0));
-            if ui.button("Tap").on_hover_text("tik het tempo in [T]").clicked() {
+            ui.add_sized([52.0, CONTROL_H], egui::DragValue::new(&mut self.song.bpm).range(40.0..=300.0).speed(0.5).fixed_decimals(0));
+            if ui.add(egui::Button::new("Tap").min_size(Vec2::new(44.0, CONTROL_H))).on_hover_text("tap the tempo [T]").clicked() {
                 self.tap();
             }
+            section_gap(ui);
             label(ui, &th, "Swing");
             let mut swing = (self.song.swing * 200.0).round();
-            if ui.add(egui::DragValue::new(&mut swing).range(0.0..=100.0).speed(0.5).fixed_decimals(0).suffix("%")).changed() {
+            if ui.add_sized([52.0, CONTROL_H], egui::DragValue::new(&mut swing).range(0.0..=100.0).speed(0.5).fixed_decimals(0).suffix("%")).changed() {
                 self.song.swing = swing / 200.0;
             }
-
-            ui.add_space(14.0);
+            section_gap(ui);
             label(ui, &th, "Pattern");
             let active = self.shared.active.load(Ordering::Relaxed);
             let blink = (self.started.elapsed().as_secs_f32() * 4.0).fract() < 0.5;
@@ -369,22 +387,22 @@ impl App {
                 let used = self.song.tracks.iter().any(|t| t.lanes[p].cells.iter().any(|c| *c != Cell::Off));
                 let current = self.song.current == p;
                 let queued = self.song.queued == Some(p);
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(CONTROL_H), Sense::click());
                 let painter = ui.painter();
                 let fill = if current { th.accent } else if resp.hovered() { th.selection } else { th.bg_light };
                 painter.rect_filled(rect, CornerRadius::ZERO, fill);
                 if queued && blink {
                     painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0, th.accent), StrokeKind::Inside);
                 }
-                let text_color = if current { th.bg } else if used { th.fg_bright } else { th.fg_dim };
-                painter.text(rect.center(), Align2::CENTER_CENTER, PATTERN_NAMES[p], FontId::monospace(13.0), text_color);
-                if used && !current {
-                    painter.circle_filled(Pos2::new(rect.center().x, rect.bottom() - 4.0), 1.5, th.accent);
-                }
                 if self.playing() && active == p && !current {
                     painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.0, th.fg_dim), StrokeKind::Inside);
                 }
-                let resp = resp.on_hover_text("klik: kies patroon [F1-F8] · shift-klik of rechtsklik: kopieer het huidige hierheen");
+                let text_color = if current { th.bg } else if used { th.fg_bright } else { th.fg_dim };
+                painter.text(rect.center(), Align2::CENTER_CENTER, PATTERN_NAMES[p], FontId::monospace(13.0), text_color);
+                if used && !current {
+                    painter.circle_filled(Pos2::new(rect.center().x, rect.bottom() - 5.0), 1.5, th.accent);
+                }
+                let resp = resp.on_hover_text("click: select pattern [F1-F8] · shift-click or right-click: copy the current pattern here");
                 if resp.clicked() {
                     let shift = ui.input(|i| i.modifiers.shift);
                     self.select_pattern(p, shift);
@@ -394,34 +412,45 @@ impl App {
                 }
             }
 
-            ui.add_space(14.0);
-            label(ui, &th, "Steps");
-            if ui.small_button("−").clicked() {
-                self.set_steps(self.song.steps().saturating_sub(1));
-            }
-            let mut steps = self.song.steps();
-            if ui.add(egui::DragValue::new(&mut steps).range(1..=MAX_STEPS).speed(0.2)).changed() {
-                self.set_steps(steps);
-            }
-            if ui.small_button("+").clicked() {
-                self.set_steps(self.song.steps() + 1);
-            }
-            for n in [8, 16, 32, 64] {
-                if ui.selectable_label(self.song.steps() == n, n.to_string()).clicked() {
-                    self.set_steps(n);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                self.scope(ui);
+                section_gap(ui);
+                for n in [64, 32, 16, 8] {
+                    let on = self.song.steps() == n;
+                    let b = egui::Button::new(egui::RichText::new(n.to_string()).color(if on { th.bg } else { th.fg }))
+                        .fill(if on { th.accent } else { th.bg_light })
+                        .min_size(Vec2::new(36.0, CONTROL_H));
+                    if ui.add(b).clicked() {
+                        self.set_steps(n);
+                    }
                 }
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.scope(ui));
+                section_gap(ui);
+                if ui.add(egui::Button::new("+").min_size(Vec2::splat(CONTROL_H))).clicked() {
+                    self.set_steps(self.song.steps() + 1);
+                }
+                let mut steps = self.song.steps();
+                if ui.add_sized([44.0, CONTROL_H], egui::DragValue::new(&mut steps).range(1..=MAX_STEPS).speed(0.2)).changed() {
+                    self.set_steps(steps);
+                }
+                if ui.add(egui::Button::new("−").min_size(Vec2::splat(CONTROL_H))).clicked() {
+                    self.set_steps(self.song.steps().saturating_sub(1));
+                }
+                label(ui, &th, "Steps");
+            });
         });
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.spacing_mut().slider_width = 110.0;
-            label(ui, &th, "Filter");
+            ui.spacing_mut().slider_width = 96.0;
+            let fixed_label = |ui: &mut egui::Ui, text: &str, w: f32| {
+                ui.add_sized([w, CONTROL_H], egui::Label::new(egui::RichText::new(text).color(th.fg_dim).size(12.0)));
+            };
+            fixed_label(ui, "Filter", 44.0);
             ui.add(egui::Slider::new(&mut self.song.cutoff, 0.0..=1.0).show_value(false)).on_hover_text("master lowpass");
-            label(ui, &th, "Delay");
+            section_gap(ui);
+            fixed_label(ui, "Delay", 40.0);
             egui::ComboBox::from_id_salt("delay")
                 .width(64.0)
                 .selected_text(delay_name(self.song.delay_steps))
@@ -430,42 +459,44 @@ impl App {
                         ui.selectable_value(&mut self.song.delay_steps, d, delay_name(d));
                     }
                 });
-            label(ui, &th, "Feedback");
+            section_gap(ui);
+            fixed_label(ui, "Feedback", 64.0);
             ui.add(egui::Slider::new(&mut self.song.feedback, 0.0..=0.85).show_value(false));
-            label(ui, &th, "Volume");
+            section_gap(ui);
+            fixed_label(ui, "Volume", 52.0);
             ui.add(egui::Slider::new(&mut self.song.master, 0.0..=1.0).show_value(false));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Export WAV").on_hover_text("4 keer het huidige patroon naar ~/Music [Ctrl+E]").clicked() {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let button = |text: &str| egui::Button::new(text).min_size(Vec2::new(0.0, CONTROL_H));
+                if ui.add(button("Export WAV")).on_hover_text("the current pattern 4 times to ~/Music [Ctrl+E]").clicked() {
                     self.export();
                 }
-                if ui.button("Save").on_hover_text("[Ctrl+S], er wordt ook automatisch bewaard").clicked() {
+                if ui.add(button("Save")).on_hover_text("[Ctrl+S], also saves automatically").clicked() {
                     self.save_now();
                 }
-                ui.menu_button("Presets", |ui| {
+                let presets = egui::containers::menu::MenuButton::from_button(button("Presets"));
+                presets.ui(ui, |ui| {
                     if ui.button("Demo, 124 BPM").clicked() {
                         self.song = Song::demo(&self.samples);
-                        ui.close();
                     }
                     if ui.button("Rave, 135 BPM").clicked() {
                         self.song = Song::rave(&self.samples);
-                        ui.close();
                     }
                 });
-                if ui.add_enabled(!self.redo.is_empty(), egui::Button::new("Redo")).on_hover_text("[Ctrl+Shift+Z]").clicked() {
+                section_gap(ui);
+                if ui.add_enabled(!self.redo.is_empty(), button("Redo")).on_hover_text("[Ctrl+Shift+Z]").clicked() {
                     self.undo(true);
                 }
-                if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).on_hover_text("[Ctrl+Z]").clicked() {
+                if ui.add_enabled(!self.undo.is_empty(), button("Undo")).on_hover_text("[Ctrl+Z]").clicked() {
                     self.undo(false);
                 }
-                if ui.button("Clear").on_hover_text("wis het huidige patroon [C]").clicked() {
+                section_gap(ui);
+                if ui.add(button("Clear")).on_hover_text("clear the current pattern [C]").clicked() {
                     self.clear_pattern();
                 }
-                if ui.button("Random").on_hover_text("[R]").clicked() {
+                if ui.add(button("Random")).on_hover_text("[R]").clicked() {
                     self.randomize();
-                }
-                if ui.button("+ Track").on_hover_text("[N]").clicked() {
-                    self.add_track();
                 }
             });
         });
@@ -473,7 +504,7 @@ impl App {
 
     fn scope(&self, ui: &mut egui::Ui) {
         let th = &self.theme;
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, 26.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(160.0, CONTROL_H), Sense::hover());
         let p = ui.painter();
         p.rect_filled(rect, CornerRadius::ZERO, th.bg_darker);
         let data = self.shared.scope.lock().unwrap().clone();
@@ -495,17 +526,24 @@ impl App {
         let steps = self.song.steps();
         let cur = self.song.current;
         let avail = ui.available_width() - LEFT_W - 12.0;
-        let cell_w = (avail / steps as f32).floor().clamp(14.0, 96.0);
+        let cell_w = (avail / steps as f32).clamp(14.0, 96.0);
         let rows = self.song.tracks.len() as f32;
-        let row_h = ((self.view_h - 70.0) / rows - ui.spacing().item_spacing.y).floor().clamp(30.0, 56.0).min(cell_w.max(30.0) + 4.0);
+        let row_h = ((self.view_h - 70.0) / rows - ui.spacing().item_spacing.y).floor().clamp(30.0, 48.0);
         let width = LEFT_W + cell_w * steps as f32 + 8.0;
         let playing = self.playing();
         let active = self.shared.active.load(Ordering::Relaxed);
         let playhead = if playing && active == cur { Some(self.shared.step.load(Ordering::Relaxed)) } else { None };
 
-        // Stapnummers.
+        // Step numbers.
         let (num_rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
         let p = ui.painter_at(num_rect);
+        let mut hx = num_rect.left() + STRIP_W;
+        for (name, w) in COLUMNS {
+            let pos = if name == "Sample" { Pos2::new(hx + 6.0, num_rect.center().y) } else { Pos2::new(hx + w / 2.0, num_rect.center().y) };
+            let align = if name == "Sample" { Align2::LEFT_CENTER } else { Align2::CENTER_CENTER };
+            p.text(pos, align, name, FontId::monospace(10.0), th.fg_dim);
+            hx += w + COL_GAP;
+        }
         for s in 0..steps {
             let x = num_rect.left() + LEFT_W + cell_w * (s as f32 + 0.5);
             let color = if playhead == Some(s) { th.fg_bright } else if s % 4 == 0 { th.fg } else { th.fg_dim };
@@ -527,8 +565,8 @@ impl App {
             let resp = ui.interact(cells, ui.id().with(("cells", ti)), Sense::click_and_drag());
             let hit = |pos: Pos2| (((pos.x - cells.left()) / cell_w).floor().max(0.0) as usize).min(steps - 1);
 
-            // Klikken of slepen tekent noten (zo lang als de L van de track), klikken op een noot wist hem,
-            // rechtsklik zet een accent en scrollen boven een noot maakt hem langer of korter.
+            // Click or drag draws notes (as long as the track's L), clicking a note erases it,
+            // right-click toggles an accent and scrolling over a note makes it longer or shorter.
             let pointer = ui.input(|i| i.pointer.clone());
             if pointer.primary_pressed() && resp.hovered() {
                 if let Some(pos) = pointer.interact_pos() {
@@ -609,7 +647,7 @@ impl App {
                     c = c.gamma_multiply(0.3);
                 }
                 p.rect_filled(bar, CornerRadius::ZERO, if sounding { th.fg_bright } else { c });
-                // Voegen tussen de blokjes van een lange noot.
+                // Dividers between the steps of a long note.
                 for b in 1..len {
                     let x = bar.left() + cell_w * b as f32 - 1.5;
                     p.line_segment([Pos2::new(x, bar.top() + 4.0), Pos2::new(x, bar.bottom() - 4.0)], Stroke::new(1.0, th.bg.gamma_multiply(0.6)));
@@ -641,14 +679,17 @@ impl App {
         let samples = self.samples.clone();
         let kind_color = self.kind_color(samples[self.song.tracks[ti].sample].kind);
         let cy = rect.center().y;
-        let mut x = rect.left() + 8.0;
-        let mut next = |w: f32| {
-            let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(w, 22.0));
-            x += w + 6.0;
+        let mut x = rect.left() + STRIP_W;
+        let mut col = 0;
+        let mut next = |_: f32| {
+            let w = COLUMNS[col].1;
+            col += 1;
+            let r = Rect::from_min_size(Pos2::new(x, cy - 13.0), Vec2::new(w, 26.0));
+            x += w + COL_GAP;
             r
         };
 
-        // Kleurstrook met level-meter.
+        // Color strip with level meter.
         let strip = Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
         let lvl = self.shared.level(ti).max(self.meters[ti]);
         self.meters[ti] = lvl * 0.86;
@@ -657,7 +698,7 @@ impl App {
         p.rect_filled(strip, CornerRadius::ZERO, kind_color.gamma_multiply(0.35 + 0.65 * lvl.min(1.0)));
 
         let num = next(20.0);
-        let num_resp = ui.interact(num, ui.id().with(("num", ti)), Sense::click()).on_hover_text("klik: selecteer en luister · rechtsklik: omhoog");
+        let num_resp = ui.interact(num, ui.id().with(("num", ti)), Sense::click()).on_hover_text("click: select and preview · right-click: move up");
         ui.painter().text(num.center(), Align2::CENTER_CENTER, format!("{}", ti + 1), FontId::monospace(12.0), if num_resp.hovered() { th.fg_bright } else { th.fg_dim });
         if num_resp.clicked() {
             self.selected = ti;
@@ -673,7 +714,7 @@ impl App {
         let current = self.song.tracks[ti].sample;
         let mut combo_ui = ui.new_child(egui::UiBuilder::new().max_rect(combo_rect).id_salt(("combo", ti)));
         egui::ComboBox::from_id_salt(("sample", ti))
-            .width(146.0)
+            .width(COLUMNS[1].1 - 4.0)
             .height(480.0)
             .selected_text(egui::RichText::new(samples[current].name.replace('_', " ")).color(th.fg_bright))
             .show_ui(&mut combo_ui, |ui| {
@@ -686,7 +727,7 @@ impl App {
                                 Kind::Riff => "Riffs",
                                 Kind::Rave => "90s rave",
                                 Kind::Vox => "Vocals",
-                                Kind::User => "Eigen samples en opnames",
+                                Kind::User => "Your samples and recordings",
                             };
                             ui.label(egui::RichText::new(title).color(self.kind_color(kind)).size(11.0));
                             first = false;
@@ -704,7 +745,7 @@ impl App {
             self.shared.preview.lock().unwrap().push((i, t.volume));
         }
 
-        // Mute, solo en opnemen.
+        // Mute, solo and record.
         let m = next(22.0);
         if toggle(ui, &th, m, "M", self.song.tracks[ti].mute, th.red, ("m", ti)).on_hover_text("mute [1-9]").clicked() {
             let t = &mut self.song.tracks[ti];
@@ -716,7 +757,7 @@ impl App {
             t.solo = !t.solo;
         }
         let rec = next(22.0);
-        let rec_resp = ui.interact(rec, ui.id().with(("rec", ti)), Sense::click_and_drag()).on_hover_text("ingedrukt houden om op te nemen van je microfoon [V]");
+        let rec_resp = ui.interact(rec, ui.id().with(("rec", ti)), Sense::click_and_drag()).on_hover_text("hold to record from your microphone [V]");
         let recording_here = self.rec_track == Some(ti);
         if rec_resp.is_pointer_button_down_on() && !self.recorder.recording() {
             self.start_recording(ti);
@@ -729,17 +770,17 @@ impl App {
         }
 
         let t = &mut self.song.tracks[ti];
-        // Volume, pan en delay-send als sleepbare balkjes.
+        // Volume, pan and delay send as draggable bars.
         let vol = next(52.0);
         bar_control(ui, &th, vol, &mut t.volume, 0.0, 1.0, th.accent, ("vol", ti), "volume");
         let pan = next(40.0);
-        bar_control(ui, &th, pan, &mut t.pan, -1.0, 1.0, th.cyan, ("pan", ti), "pan (dubbelklik = midden)");
+        bar_control(ui, &th, pan, &mut t.pan, -1.0, 1.0, th.cyan, ("pan", ti), "pan (double-click = center)");
         let send = next(40.0);
         bar_control(ui, &th, send, &mut t.send, 0.0, 1.0, th.magenta, ("send", ti), "delay send");
 
-        // Toonhoogte in halve tonen: verticaal slepen, dubbelklik = 0.
+        // Pitch in semitones: drag vertically, double-click = 0.
         let pitch = next(34.0);
-        let presp = ui.interact(pitch, ui.id().with(("pitch", ti)), Sense::click_and_drag()).on_hover_text("pitch in halve tonen (slepen · dubbelklik = 0)");
+        let presp = ui.interact(pitch, ui.id().with(("pitch", ti)), Sense::click_and_drag()).on_hover_text("pitch in semitones (drag · double-click = 0)");
         if presp.dragged() {
             t.pitch = (t.pitch - presp.drag_delta().y * 0.1).clamp(-24.0, 24.0);
         }
@@ -753,9 +794,9 @@ impl App {
         p.rect_filled(pitch, CornerRadius::ZERO, if presp.hovered() { th.selection } else { th.bg_light });
         p.text(pitch.center(), Align2::CENTER_CENTER, format!("{:+}", t.pitch.round() as i32), FontId::monospace(12.0), if t.pitch.round() == 0.0 { th.fg_dim } else { th.fg_bright });
 
-        // Lengte van nieuwe noten in blokjes: klik = langer, rechtsklik = korter.
+        // Length of new notes in steps: click = longer, right-click = shorter.
         let len_rect = next(30.0);
-        let lresp = ui.interact(len_rect, ui.id().with(("len", ti)), Sense::click()).on_hover_text("lengte van nieuwe noten in blokjes (klik / rechtsklik)");
+        let lresp = ui.interact(len_rect, ui.id().with(("len", ti)), Sense::click()).on_hover_text("length of new notes in steps (click / right-click)");
         const LENS: [u8; 5] = [1, 2, 4, 8, 16];
         let li = LENS.iter().position(|&l| l >= t.note_len).unwrap_or(0);
         if lresp.clicked() {
@@ -769,7 +810,7 @@ impl App {
         p.text(len_rect.center(), Align2::CENTER_CENTER, format!("L{}", t.note_len), FontId::monospace(12.0), if t.note_len > 1 { th.fg_bright } else { th.fg_dim });
 
         let x_rect = next(18.0);
-        let xr = ui.interact(x_rect, ui.id().with(("x", ti)), Sense::click()).on_hover_text("track verwijderen");
+        let xr = ui.interact(x_rect, ui.id().with(("x", ti)), Sense::click()).on_hover_text("remove track");
         ui.painter().text(x_rect.center(), Align2::CENTER_CENTER, "×", FontId::monospace(15.0), if xr.hovered() { th.red } else { th.fg_dim });
         if xr.clicked() {
             *remove = Some(ti);
@@ -784,27 +825,29 @@ impl App {
         }
         let audio = match &self.output {
             Output::Device(_, rate) => format!("{:.1} kHz", *rate as f32 / 1000.0),
-            Output::Silent => "geen audio".into(),
+            Output::Silent => "no audio".into(),
         };
         let msg = if self.recorder.recording() {
-            format!("● opnemen op track {}…  laat los om te stoppen", self.rec_track.map_or(0, |t| t + 1))
+            format!("● recording on track {}…  release to stop", self.rec_track.map_or(0, |t| t + 1))
         } else {
             match &self.flash {
                 Some((m, at)) if at.elapsed() < Duration::from_secs(4) => m.clone(),
-                _ => String::new(),
+                _ => format!(
+                    "Pattern {} · step {}/{} · {:.0} BPM · {audio}",
+                    PATTERN_NAMES[self.song.current],
+                    self.shared.step.load(Ordering::Relaxed) + 1,
+                    self.song.steps(),
+                    self.song.bpm
+                ),
             }
         };
-        let step = self.shared.step.load(Ordering::Relaxed) + 1;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(msg).color(if self.recorder.recording() { th.red } else { th.fg }));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} · stap {step}/{} · {:.0} BPM · {audio}   ·   Space play · ←→ steps · ↑↓ BPM · F1-F8 patroon · 1-9 mute · Tab track · V opnemen · R random · Ctrl+Z undo · rechtsklik accent · scroll op noot = lengte",
-                        PATTERN_NAMES[self.song.current],
-                        self.song.steps(),
-                        self.song.bpm
-                    ))
+                    egui::RichText::new(
+                        "Space play · ←→ steps · ↑↓ BPM · F1-F8 pattern · 1-9 mute · Tab track · V record · right-click accent · scroll a note to resize",
+                    )
                     .color(th.fg_dim)
                     .size(11.0),
                 );
@@ -825,7 +868,7 @@ impl eframe::App for App {
         }
         self.keys(&ctx);
 
-        // Push-to-talk: loslaten van knop of V stopt de opname.
+        // Push-to-talk: releasing the button or V stops the recording.
         if self.recorder.recording() {
             let held = ctx.input(|i| i.pointer.primary_down() || i.key_down(egui::Key::V));
             if !held {
@@ -833,7 +876,7 @@ impl eframe::App for App {
             }
         }
 
-        // Het engine-patroon is gewisseld op de maatgrens.
+        // The engine switched patterns at the end of the bar.
         let active = self.shared.active.load(Ordering::Relaxed);
         if self.playing() && self.song.queued == Some(active) {
             self.song.current = active;
@@ -865,21 +908,24 @@ impl eframe::App for App {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         self.history(pointer_down);
 
-        // Wijzigingen naar de audio-thread.
+        // Push changes to the audio thread.
         if self.song != self.pushed {
             *self.shared.song.lock().unwrap() = self.song.clone();
             self.pushed = self.song.clone();
         }
-        // Autosave, maximaal eens per paar seconden.
+        // Autosave, at most once every few seconds.
         if self.song != self.saved && self.last_save.elapsed() > Duration::from_secs(3) {
             let _ = pattern::save(&self.song, &self.samples);
             self.saved = self.song.clone();
             self.last_save = Instant::now();
         }
-        ctx.request_repaint_after(Duration::from_millis(16));
+        // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
+        // Input still triggers an immediate repaint.
+        let busy = self.playing() || self.recorder.recording() || self.meters.iter().any(|m| *m > 0.01);
+        ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 
-    /// Tab gebruiken we voor trackselectie; egui zou er anders de focus mee naar een invoerveld verplaatsen.
+    /// Tab selects tracks; otherwise egui would use it to move focus into a text field.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         raw.events.retain(|e| match e {
             egui::Event::Key { key: egui::Key::Tab, pressed, modifiers, .. } => {
@@ -922,7 +968,7 @@ fn toggle(ui: &mut egui::Ui, th: &Theme, rect: Rect, text: &str, on: bool, color
     resp
 }
 
-/// Horizontaal sleepbaar balkje voor een waarde tussen `min` en `max`, ook met scrollen.
+/// Horizontal draggable bar for a value between `min` and `max`, also adjustable by scrolling.
 #[allow(clippy::too_many_arguments)]
 fn bar_control(ui: &mut egui::Ui, th: &Theme, rect: Rect, value: &mut f32, min: f32, max: f32, color: Color32, id: (&str, usize), tip: &str) {
     let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag()).on_hover_text(tip);
@@ -1012,4 +1058,8 @@ fn apply_theme(ctx: &egui::Context, th: &Theme) {
         style.spacing.interact_size.y = 24.0;
         style.spacing.button_padding = Vec2::new(10.0, 4.0);
     });
+}
+
+fn section_gap(ui: &mut egui::Ui) {
+    ui.add_space(18.0);
 }

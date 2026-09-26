@@ -1,7 +1,6 @@
-//! Kleuren en font uit het actieve Omarchy-thema, zodat de app meeverandert met `omarchy theme set`.
+//! Colors and font from the active Omarchy theme, so the app follows `omarchy theme set`.
 
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use eframe::egui::Color32;
 
@@ -27,7 +26,7 @@ pub struct Theme {
 }
 
 impl Default for Theme {
-    /// Tokyo Night, de standaard van Omarchy.
+    /// Tokyo Night, the Omarchy default.
     fn default() -> Self {
         let c = |h: &str| hex(h).unwrap();
         Self {
@@ -62,7 +61,11 @@ fn hex(s: &str) -> Option<Color32> {
 }
 
 pub fn colors_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".local/state/omarchy/current/theme/colors.toml"))
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local/state")))?;
+    Some(state.join("omarchy/current/theme/colors.toml"))
 }
 
 impl Theme {
@@ -103,34 +106,37 @@ impl Theme {
     }
 }
 
-/// Houdt bij of `colors.toml` is veranderd (Omarchy vervangt het bestand bij een themawissel).
+/// Tracks whether the theme changed. Compares the contents of `colors.toml` rather than its
+/// modification time, because a theme switch can copy files with their original timestamps.
 pub struct Watcher {
-    last: Option<SystemTime>,
+    last: Option<String>,
     checked: std::time::Instant,
 }
 
 impl Watcher {
     pub fn new() -> Self {
-        Self { last: Self::mtime(), checked: std::time::Instant::now() }
+        Self { last: Self::read(), checked: std::time::Instant::now() }
     }
 
-    fn mtime() -> Option<SystemTime> {
-        colors_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
+    fn read() -> Option<String> {
+        colors_path().and_then(|p| std::fs::read_to_string(p).ok())
     }
 
     pub fn changed(&mut self) -> bool {
-        if self.checked.elapsed().as_millis() < 1000 {
+        if self.checked.elapsed().as_millis() < 500 {
             return false;
         }
         self.checked = std::time::Instant::now();
-        let now = Self::mtime();
-        let changed = now != self.last;
+        let now = Self::read();
+        if now.is_none() || now == self.last {
+            return false;
+        }
         self.last = now;
-        changed
+        true
     }
 }
 
-/// Het monospace-font van het systeem (`omarchy font set` zet dat via fontconfig).
+/// The system monospace font (`omarchy font set` sets it through fontconfig).
 pub fn system_font(style: &str) -> Option<Vec<u8>> {
     let out = std::process::Command::new("fc-match").args(["-f", "%{file}", &format!("monospace:{style}")]).output().ok()?;
     let path = String::from_utf8(out.stdout).ok()?;

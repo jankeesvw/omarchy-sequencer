@@ -16,11 +16,11 @@ pub enum Cell {
     Accent,
 }
 
-/// De noten van één track in één patroon.
+/// The notes of one track in one pattern.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lane {
     pub cells: Vec<Cell>,
-    /// Lengte in stappen van de noot die op deze stap begint. 1 = one-shot, langer = afgekapt na zoveel blokjes.
+    /// Length in steps of the note starting at this step. 1 = one-shot, longer = cut off after that many steps.
     pub lens: Vec<u8>,
 }
 
@@ -31,17 +31,17 @@ impl Default for Lane {
 }
 
 impl Lane {
-    /// De startstap van de noot die stap `s` bedekt, als die er is.
+    /// The start step of the note covering step `s`, if any.
     pub fn note_at(&self, s: usize) -> Option<usize> {
         (0..=s).rev().find(|&n| self.cells[n] != Cell::Off && n + self.lens[n] as usize > s)
     }
 
-    /// Hoeveel stappen er vanaf `s` vrij zijn tot de volgende noot of het einde van het grid.
+    /// How many steps are free from `s` until the next note or the end of the grid.
     fn room(&self, s: usize, steps: usize) -> usize {
         (s + 1..steps).find(|&n| self.cells[n] != Cell::Off).unwrap_or(steps) - s
     }
 
-    /// Zet een noot op `s`, zo lang als past.
+    /// Places a note at `s`, as long as fits.
     pub fn place(&mut self, s: usize, cell: Cell, len: u8, steps: usize) {
         if s >= steps || self.note_at(s).is_some() {
             return;
@@ -81,15 +81,15 @@ impl Lane {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub sample: usize,
-    /// Eén lane per patroon (A t/m H).
+    /// One lane per pattern (A to H).
     pub lanes: Vec<Lane>,
-    /// Lengte voor nieuw geplaatste noten.
+    /// Length for newly placed notes.
     pub note_len: u8,
     pub volume: f32,
     pub pitch: f32,
-    /// -1 links, 0 midden, 1 rechts.
+    /// -1 left, 0 center, 1 right.
     pub pan: f32,
-    /// Hoeveel van deze track naar de delay gaat.
+    /// How much of this track goes to the delay.
     pub send: f32,
     pub mute: bool,
     pub solo: bool,
@@ -118,14 +118,14 @@ pub struct Song {
     pub master: f32,
     /// Master lowpass, 0..1 (1 = open).
     pub cutoff: f32,
-    /// Delaytijd in zestienden.
+    /// Delay time in sixteenth notes.
     pub delay_steps: u8,
     pub feedback: f32,
-    /// Aantal stappen per patroon.
+    /// Number of steps per pattern.
     pub steps: Vec<usize>,
-    /// Het patroon dat speelt en dat je bewerkt.
+    /// The pattern that plays and that you edit.
     pub current: usize,
-    /// Wisselt naar dit patroon aan het eind van het huidige.
+    /// Switches to this pattern at the end of the current one.
     pub queued: Option<usize>,
     pub tracks: Vec<Track>,
 }
@@ -168,13 +168,13 @@ impl Song {
                 song.tracks[t].lanes[p].place(h, cell, len, 16);
             }
         };
-        // A: basisgroove.
+        // A: basic groove.
         put(0, 0, &[0, 4, 8, 12], &[0]);
         put(1, 0, &[4, 12], &[]);
         put(3, 0, &[0, 2, 4, 6, 8, 10, 12, 14], &[2, 6, 10, 14]);
         put(4, 0, &[7, 15], &[]);
         put(6, 0, &[0, 6, 10], &[0]);
-        // B: voller, met clap, cowbell en plucks.
+        // B: fuller, with clap, cowbell and plucks.
         put(0, 1, &[0, 4, 8, 12, 14], &[0]);
         put(1, 1, &[4, 12], &[]);
         put(2, 1, &[12], &[]);
@@ -191,7 +191,7 @@ impl Song {
         song
     }
 
-    /// Een 135 BPM rave-patroon met lange noten voor loop, stabs, hoover en acid.
+    /// A 135 BPM rave pattern with long notes for loop, stabs, hoover and acid.
     pub fn rave(samples: &[Arc<Sample>]) -> Self {
         let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
         let row = |name: &str, notes: &[(usize, u8, bool)], volume: f32, pan: f32, send: f32| {
@@ -227,7 +227,7 @@ impl Song {
     }
 }
 
-// Opgeslagen met samplenamen naast de indexen, zodat het bestand blijft kloppen als er samples bijkomen.
+// Saved with sample names next to the indexes, so the file stays valid when samples are added.
 #[derive(Serialize, Deserialize)]
 struct Saved {
     song: Song,
@@ -241,7 +241,7 @@ fn save_path() -> Option<std::path::PathBuf> {
 pub fn save(song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {
     let names = song.tracks.iter().map(|t| samples[t.sample].name.clone()).collect();
     let saved = Saved { song: song.clone(), names };
-    let path = save_path().ok_or_else(|| std::io::Error::other("geen config dir"))?;
+    let path = save_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
     std::fs::create_dir_all(path.parent().unwrap())?;
     std::fs::write(path, serde_json::to_string(&saved)?)
 }

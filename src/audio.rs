@@ -10,19 +10,19 @@ pub const SCOPE_LEN: usize = 1024;
 const FADE_FRAMES: f32 = 96.0;
 const MAX_VOICES: usize = 64;
 
-/// Alles wat UI en audio-thread delen.
+/// Everything the UI and the audio thread share.
 pub struct Shared {
     pub song: Mutex<Song>,
     pub playing: AtomicBool,
     pub step: AtomicUsize,
-    /// Het patroon dat de engine op dit moment speelt (na een wissel op de maatgrens).
+    /// The pattern the engine is playing right now (after a switch at the end of a bar).
     pub active: AtomicUsize,
-    /// Per track een piekniveau (f32 bits) voor de meters.
+    /// Peak level per track (f32 bits) for the meters.
     pub levels: [AtomicU32; MAX_TRACKS],
     pub scope: Mutex<Vec<f32>>,
-    /// Sample-previews die de UI aanvraagt (sample index, gain).
+    /// Sample previews requested by the UI (sample index, gain).
     pub preview: Mutex<Vec<(usize, f32)>>,
-    /// Nieuwe samples (opnames) die de engine aan zijn lijst moet toevoegen.
+    /// New samples (recordings) the engine should add to its list.
     pub incoming: Mutex<Vec<Arc<Sample>>>,
 }
 
@@ -54,7 +54,7 @@ struct Voice {
     gain_r: f32,
     send: f32,
     fade: Option<f32>,
-    /// Frames tot de noot wordt afgekapt; None speelt de sample helemaal uit.
+    /// Frames until the note is cut off; None plays the whole sample.
     gate: Option<f64>,
 }
 
@@ -102,7 +102,7 @@ impl Engine {
         if sample >= self.samples.len() {
             return;
         }
-        // Eén stem per track: de vorige wordt kort uitgefade (choke), dat klinkt strak bij hats en riffs.
+        // One voice per track: the previous one gets a short fade out (choke), which keeps hats and riffs tight.
         if track.is_some() {
             for v in self.voices.iter_mut().filter(|v| v.track == track && v.fade.is_none()) {
                 v.fade = Some(1.0);
@@ -146,20 +146,20 @@ impl Engine {
             let audible = if solo { t.solo } else { !t.mute };
             if cell != Cell::Off && audible {
                 let accent = if cell == Cell::Accent { 1.0 } else { 0.62 };
-                // Lange noten (meer dan één blokje) klinken precies zo lang als ze in het grid staan.
+                // Long notes (more than one step) sound exactly as long as they are in the grid.
                 let blocks = lane.lens[step] as f64;
                 let gate = (blocks > 1.0).then_some(blocks * len);
                 self.trigger(t.sample, Some(i), t.volume * accent, t.pitch, t.pan, t.send, gate);
                 self.shared.levels[i].store(accent.to_bits(), Ordering::Relaxed);
             }
         }
-        // Swing: even stappen lang, oneven kort.
+        // Swing: even steps long, odd steps short.
         let swing = song.swing as f64;
         self.until_next += if step % 2 == 0 { len * (1.0 + swing) } else { len * (1.0 - swing) };
         self.next_step = step + 1;
     }
 
-    /// Rendert interleaved stereo.
+    /// Renders interleaved stereo.
     pub fn render(&mut self, out: &mut [f32]) {
         let previews = match self.shared.preview.try_lock() {
             Ok(mut p) if !p.is_empty() => std::mem::take(&mut *p),
@@ -230,7 +230,7 @@ impl Engine {
             }
             self.voices.retain(|v| (v.gain_l > 0.0 || v.gain_r > 0.0) && v.fade.is_none_or(|f| f > 0.0));
 
-            // Ping-pong delay op tempo.
+            // Tempo synced ping-pong delay.
             let read = (self.delay_pos + self.delay.len() - delay_len) % self.delay.len();
             let [dl, dr] = self.delay[read];
             self.delay[self.delay_pos] = [send_l + dr * feedback, send_r + dl * feedback];
@@ -238,7 +238,7 @@ impl Engine {
             l += dl * 0.8;
             r += dr * 0.8;
 
-            // Master lowpass (state variable); de cutoff glijdt mee om klikken te voorkomen.
+            // Master lowpass (state variable); the cutoff glides to avoid clicks.
             self.cutoff += (target_cutoff - self.cutoff) * 0.001;
             if self.cutoff < 0.995 {
                 let hz = 60.0 * (20_000.0f32 / 60.0).powf(self.cutoff);
@@ -251,7 +251,7 @@ impl Engine {
                     *x = *low;
                 }
             }
-            // Zachte clipper op de master.
+            // Soft clipper on the master.
             frame[0] = (l * master * 1.4).tanh();
             frame[1] = (r * master * 1.4).tanh();
             if self.scope_buf.len() < SCOPE_LEN {
@@ -271,7 +271,7 @@ impl Engine {
 
 pub enum Output {
     Device(#[allow(dead_code)] cpal::Stream, u32),
-    /// Geen geluidskaart: de sequencer loopt stil door op een eigen klok.
+    /// No sound card: the sequencer keeps running silently on its own clock.
     Silent,
 }
 
@@ -279,7 +279,7 @@ pub fn start(samples: Vec<Arc<Sample>>, shared: Arc<Shared>) -> Output {
     match open_device(samples.clone(), shared.clone()) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!("sequencer: geen audio ({e}), ik draai stil door");
+            eprintln!("sequencer: no audio ({e}), running silently");
             std::thread::spawn(move || {
                 let mut engine = Engine::new(samples, shared, 44_100);
                 let mut buf = vec![0.0; 882];
@@ -295,7 +295,7 @@ pub fn start(samples: Vec<Arc<Sample>>, shared: Arc<Shared>) -> Output {
 
 fn open_device(samples: Vec<Arc<Sample>>, shared: Arc<Shared>) -> Result<Output, Box<dyn std::error::Error>> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("geen output device")?;
+    let device = host.default_output_device().ok_or("no output device")?;
     let supported = device.default_output_config()?;
     let format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
@@ -306,7 +306,7 @@ fn open_device(samples: Vec<Arc<Sample>>, shared: Arc<Shared>) -> Result<Output,
         cpal::SampleFormat::I16 => build::<i16>(&device, config, engine)?,
         cpal::SampleFormat::I32 => build::<i32>(&device, config, engine)?,
         cpal::SampleFormat::U16 => build::<u16>(&device, config, engine)?,
-        other => return Err(format!("sample format {other} niet ondersteund").into()),
+        other => return Err(format!("sample format {other} not supported").into()),
     };
     stream.play()?;
     Ok(Output::Device(stream, rate))
@@ -336,12 +336,12 @@ where
                 }
             }
         },
-        |e| eprintln!("sequencer: audio fout: {e}"),
+        |e| eprintln!("sequencer: audio error: {e}"),
         None,
     )
 }
 
-/// Rendert het huidige patroon een aantal keer offline naar een stereo WAV in ~/Music.
+/// Renders the current pattern a number of times offline to a stereo WAV in ~/Music.
 pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<std::path::PathBuf, String> {
     const RATE: u32 = 44_100;
     let mut song = song.clone();
@@ -353,7 +353,7 @@ pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<st
     let music = bar * loops as f64;
     let frames = music as usize + RATE as usize * 2;
 
-    let dir = dirs::audio_dir().or_else(dirs::home_dir).ok_or("geen muziekmap")?;
+    let dir = dirs::audio_dir().or_else(dirs::home_dir).ok_or("no music folder")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let letter = (b'a' + song.current as u8) as char;
     let path = (1..)
@@ -366,7 +366,7 @@ pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<st
     let mut done = 0;
     while done < frames {
         let n = (frames - done).min(512);
-        // Na de laatste loop stopt de sequencer, zodat alleen de staart van delay en samples nog klinkt.
+        // After the last loop the sequencer stops, so only the tail of the delay and samples remains.
         if done as f64 >= music {
             shared.playing.store(false, Ordering::Relaxed);
         }
@@ -380,7 +380,7 @@ pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<st
     Ok(path)
 }
 
-/// Push-to-talk opname van de standaard microfoon, net als Voxtype: de input stream staat alleen open zolang je opneemt.
+/// Push-to-talk recording from the default microphone, like Voxtype: the input stream is only open while recording.
 pub struct Recorder {
     stream: Option<cpal::Stream>,
     buf: Arc<Mutex<Vec<f32>>>,
@@ -399,7 +399,7 @@ impl Recorder {
 
     pub fn start(&mut self) -> Result<(), String> {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or("geen microfoon gevonden")?;
+        let device = host.default_input_device().ok_or("no microphone found")?;
         let supported = device.default_input_config().map_err(|e| e.to_string())?;
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
@@ -409,7 +409,7 @@ impl Recorder {
             cpal::SampleFormat::F32 => self.build::<f32>(&device, config),
             cpal::SampleFormat::I16 => self.build::<i16>(&device, config),
             cpal::SampleFormat::I32 => self.build::<i32>(&device, config),
-            other => return Err(format!("microfoonformaat {other} niet ondersteund")),
+            other => return Err(format!("microphone format {other} not supported")),
         }
         .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
@@ -434,19 +434,19 @@ impl Recorder {
                 for frame in data.chunks(channels) {
                     let s = frame.iter().map(|x| <f32 as cpal::FromSample<T>>::from_sample_(*x)).sum::<f32>() / channels as f32;
                     peak = peak.max(s.abs());
-                    // Maximaal 20 seconden.
+                    // At most 20 seconds.
                     if b.len() < max {
                         b.push(s);
                     }
                 }
                 level.store(peak.to_bits(), Ordering::Relaxed);
             },
-            |e| eprintln!("sequencer: microfoon fout: {e}"),
+            |e| eprintln!("sequencer: microphone error: {e}"),
             None,
         )
     }
 
-    /// Stopt de opname en geeft de ruwe audio terug.
+    /// Stops recording and returns the raw audio.
     pub fn stop(&mut self) -> (Vec<f32>, u32) {
         self.stream = None;
         self.level.store(0, Ordering::Relaxed);
