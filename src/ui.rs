@@ -72,6 +72,18 @@ const CREDITS: &[(&str, &str)] = &[
 
 /// Size of a grid cell; the rows are as tall.
 const CELL: f32 = 30.0;
+/// How long a freshly drawn note takes to pop in.
+const POP: Duration = Duration::from_millis(280);
+
+struct Spark {
+    pos: Pos2,
+    vel: Vec2,
+    color: Color32,
+    born: Instant,
+    life: f32,
+    size: f32,
+}
+
 /// How long the trigger animation of a cell lasts.
 const FLASH: Duration = Duration::from_millis(350);
 const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -118,6 +130,12 @@ pub struct App {
     confirm_remove: Option<String>,
     /// Trigger animations: track, step, and when it fired.
     flashes: Vec<(usize, usize, Instant)>,
+    /// Click effects: sparks flying off, notes popping in, erased notes shrinking away, accent glints.
+    sparks: Vec<Spark>,
+    pops: Vec<(usize, usize, usize, Instant)>,
+    ghosts: Vec<(Rect, Color32, Instant)>,
+    rings: Vec<(Rect, Color32, Instant)>,
+    glints: Vec<(Pos2, Color32, Instant)>,
     last_step: Option<usize>,
     /// The track whose effects window is open, and where it opens.
     fx_open: Option<(usize, Pos2)>,
@@ -169,6 +187,11 @@ impl App {
             installed: Arc::new(Mutex::new(Vec::new())),
             confirm_remove: None,
             flashes: Vec::new(),
+            sparks: Vec::new(),
+            pops: Vec::new(),
+            ghosts: Vec::new(),
+            rings: Vec::new(),
+            glints: Vec::new(),
             last_step: None,
             fx_open: None,
             fx_loop: None,
@@ -791,15 +814,29 @@ impl App {
         if !pointer.primary_down() {
             self.paint = None;
         }
+        let color = self.kind_color(self.samples[self.song.tracks[ti].sample].kind);
+        let cell_rect = |s: usize, len: usize| Rect::from_min_size(Pos2::new(cells.left() + cell_w * s as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
         if let (Some(paint), Some(pos)) = (self.paint, pointer.hover_pos()) {
             if cells.contains(pos) && pointer.primary_down() {
+                // A click gets the full burst, a drag a smaller one per cell.
+                let amount = if pointer.primary_pressed() { 18 } else { 6 };
+                let s = hit(pos);
                 let track = &mut self.song.tracks[ti];
                 let len = track.note_len;
                 let lane = &mut track.lanes[cur];
                 if paint == Cell::Off {
-                    lane.erase(hit(pos));
-                } else {
-                    lane.place(hit(pos), Cell::On, len, steps);
+                    if let Some(n) = lane.note_at(s) {
+                        let bar = cell_rect(n, (lane.lens[n] as usize).min(steps - n));
+                        lane.erase(s);
+                        self.ghosts.push((bar, color, Instant::now()));
+                        self.burst(bar, color, amount / 2, true);
+                    }
+                } else if lane.note_at(s).is_none() {
+                    lane.place(s, Cell::On, len, steps);
+                    self.pops.push((ti, cur, s, Instant::now()));
+                    let bar = cell_rect(s, lane.lens[s] as usize);
+                    self.rings.push((bar, color, Instant::now()));
+                    self.burst(bar, color, amount, false);
                 }
             }
         }
@@ -808,13 +845,23 @@ impl App {
                 let track = &mut self.song.tracks[ti];
                 let len = track.note_len;
                 let lane = &mut track.lanes[cur];
-                match lane.note_at(hit(pos)) {
+                let s = hit(pos);
+                let n = match lane.note_at(s) {
                     Some(n) => {
                         let c = &mut lane.cells[n];
                         *c = if *c == Cell::Accent { Cell::On } else { Cell::Accent };
+                        n
                     }
-                    None => lane.place(hit(pos), Cell::Accent, len, steps),
-                }
+                    None => {
+                        lane.place(s, Cell::Accent, len, steps);
+                        self.pops.push((ti, cur, s, Instant::now()));
+                        s
+                    }
+                };
+                let cell = cell_rect(n, 1);
+                self.glints.push((cell.center(), color, Instant::now()));
+                self.rings.push((cell, Color32::WHITE, Instant::now()));
+                self.burst(cell, Color32::WHITE, 12, false);
             }
         }
         if resp.hovered() {
@@ -846,6 +893,23 @@ impl App {
             }
             p.rect_filled(r, CornerRadius::ZERO, base);
         }
+        // Rollover: the note you would draw, or an outline around the one you would erase.
+        let mut hover_note: Option<Rect> = None;
+        if let Some(pos) = pointer.hover_pos().filter(|pos| resp.hovered() && cells.contains(*pos) && self.paint.is_none()) {
+            let s = hit(pos);
+            let lane = &self.song.tracks[ti].lanes[cur];
+            match lane.note_at(s) {
+                None => {
+                    let room = (s + 1..steps).find(|&n| lane.cells[n] != Cell::Off).unwrap_or(steps) - s;
+                    let len = (self.song.tracks[ti].note_len as usize).min(room).max(1);
+                    let preview = cell_rect(s, len);
+                    p.rect_filled(preview, CornerRadius::ZERO, color.gamma_multiply(0.28));
+                    p.rect_stroke(preview, CornerRadius::ZERO, Stroke::new(1.5, color.gamma_multiply(0.9)), StrokeKind::Inside);
+                }
+                Some(n) => hover_note = Some(cell_rect(n, (lane.lens[n] as usize).min(steps - n))),
+            }
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
         for n in 0..steps {
             let accent = match lane.cells[n] {
                 Cell::Off => continue,
@@ -854,12 +918,25 @@ impl App {
             };
             let len = (lane.lens[n] as usize).min(steps - n);
             let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
+            // A note that was just drawn pops in with a little overshoot.
+            let pop = self.pops.iter().rev().find(|p| p.0 == ti && p.1 == cur && p.2 == n).map(|p| (p.3.elapsed().as_secs_f32() / POP.as_secs_f32()).clamp(0.0, 1.0));
+            let bar = match pop {
+                Some(t) => {
+                    let (c1, c3) = (1.70158f32, 2.70158f32);
+                    let k = 1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2);
+                    Rect::from_center_size(bar.center(), bar.size() * (0.35 + 0.65 * k))
+                }
+                None => bar,
+            };
             let sounding = playhead.is_some_and(|h| h >= n && h < n + len) && !dead;
             let mut c = if accent { color } else { th.soften(color) };
             if dead {
                 c = c.gamma_multiply(0.3);
             }
             p.rect_filled(bar, CornerRadius::ZERO, c);
+            if let Some(t) = pop {
+                p.rect_filled(bar, CornerRadius::ZERO, th.fg_bright.gamma_multiply((1.0 - t).powi(2) * 0.8));
+            }
             // While a long note sounds, a soft highlight follows the playhead across its steps.
             if let (true, Some(h)) = (sounding && len > 1, playhead) {
                 let block = Rect::from_min_size(Pos2::new(cells.left() + cell_w * h as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
@@ -883,6 +960,9 @@ impl App {
             if len > 1 && cell_w >= 18.0 {
                 p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.on(c));
             }
+        }
+        if let Some(bar) = hover_note {
+            p.rect_stroke(bar.expand(1.0), CornerRadius::ZERO, Stroke::new(2.0, th.fg_bright), StrokeKind::Outside);
         }
     }
 
@@ -1201,6 +1281,70 @@ impl App {
             self.fx_open = None;
             self.fx_loop = None;
         }
+    }
+
+    /// Throws `amount` sparks from anywhere in `from`; `falling` ones drop instead of bursting outwards.
+    fn burst(&mut self, from: Rect, color: Color32, amount: usize, falling: bool) {
+        for _ in 0..amount {
+            let at = Pos2::new(from.left() + fastrand::f32() * from.width(), from.center().y + (fastrand::f32() - 0.5) * from.height() * 0.5);
+            let angle = fastrand::f32() * std::f32::consts::TAU;
+            let speed = if falling { 30.0 + fastrand::f32() * 60.0 } else { 110.0 + fastrand::f32() * 170.0 };
+            let mut vel = Vec2::angled(angle) * speed;
+            if falling {
+                vel.y = vel.y.abs() * 0.4;
+            }
+            self.sparks.push(Spark {
+                pos: at,
+                vel,
+                color: if fastrand::f32() < 0.3 { self.theme.fg_bright } else { color },
+                born: Instant::now(),
+                life: 0.5 + fastrand::f32() * 0.45,
+                size: 3.0 + fastrand::f32() * 3.0,
+            });
+        }
+    }
+
+    /// Paints the click effects on top of everything and forgets the ones that are done.
+    fn effects(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let dt = ctx.input(|i| i.stable_dt).min(0.05);
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("click_effects")));
+        for s in &mut self.sparks {
+            s.vel.y += 260.0 * dt;
+            s.vel *= 1.0 - 2.5 * dt;
+            s.pos += s.vel * dt;
+            let t = now.duration_since(s.born).as_secs_f32() / s.life;
+            let size = s.size * (1.0 - t * 0.6);
+            p.rect_filled(Rect::from_center_size(s.pos, Vec2::splat(size)), CornerRadius::ZERO, s.color.gamma_multiply((1.0 - t).clamp(0.0, 1.0)));
+        }
+        self.sparks.retain(|s| now.duration_since(s.born).as_secs_f32() < s.life);
+        for (rect, color, at) in &self.ghosts {
+            let t = (now.duration_since(*at).as_secs_f32() / 0.3).min(1.0);
+            let ghost = Rect::from_center_size(rect.center(), rect.size() * (1.0 - t * 0.7));
+            p.rect_filled(ghost, CornerRadius::ZERO, color.gamma_multiply(0.5 * (1.0 - t)));
+            p.rect_stroke(ghost, CornerRadius::ZERO, Stroke::new(1.5, color.gamma_multiply(1.0 - t)), StrokeKind::Outside);
+        }
+        self.ghosts.retain(|g| now.duration_since(g.2).as_secs_f32() < 0.3);
+        // A ring that grows out of a new note and fades.
+        for (rect, color, at) in &self.rings {
+            let t = (now.duration_since(*at).as_secs_f32() / 0.4).min(1.0);
+            let ease = 1.0 - (1.0 - t).powi(3);
+            p.rect_stroke(rect.expand(2.0 + 12.0 * ease), CornerRadius::ZERO, Stroke::new(2.5 * (1.0 - t) + 0.5, color.gamma_multiply(1.0 - t)), StrokeKind::Outside);
+        }
+        self.rings.retain(|r| now.duration_since(r.2).as_secs_f32() < 0.4);
+        for (center, color, at) in &self.glints {
+            let t = (now.duration_since(*at).as_secs_f32() / 0.4).min(1.0);
+            let r = 6.0 + 22.0 * t;
+            let fade = (1.0 - t).powi(2);
+            for d in [Vec2::new(r, 0.0), Vec2::new(0.0, r)] {
+                p.line_segment([*center - d, *center + d], Stroke::new(2.0, Color32::WHITE.gamma_multiply(fade)));
+            }
+            let d = r * 0.45;
+            p.line_segment([*center - Vec2::splat(d), *center + Vec2::splat(d)], Stroke::new(1.5, color.gamma_multiply(fade)));
+            p.line_segment([*center + Vec2::new(d, -d), *center + Vec2::new(-d, d)], Stroke::new(1.5, color.gamma_multiply(fade)));
+        }
+        self.glints.retain(|g| now.duration_since(g.2).as_secs_f32() < 0.4);
+        self.pops.retain(|p| now.duration_since(p.3) < POP);
     }
 
     fn start_install(&mut self, id: &str) {
@@ -1691,6 +1835,7 @@ impl eframe::App for App {
                 });
             });
 
+        self.effects(&ctx);
         self.fx_window(&ctx);
         self.songs_window(&ctx);
         self.about_window(&ctx);
@@ -1714,7 +1859,8 @@ impl eframe::App for App {
         }
         // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
         // Input still triggers an immediate repaint.
-        let busy = self.playing() || self.about_open.is_some() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
+        let animating = !self.sparks.is_empty() || !self.pops.is_empty() || !self.ghosts.is_empty() || !self.rings.is_empty() || !self.glints.is_empty();
+        let busy = animating || self.playing() || self.about_open.is_some() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
         ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 
