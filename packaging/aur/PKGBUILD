@@ -14,7 +14,7 @@ provides=("$_name")
 conflicts=("$_name")
 options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/$_name-$pkgver-x86_64-linux.tar.gz")
-sha256sums_x86_64=('5ba950573282b9226d4e39badfefbda59ea05aa626311863f8034c86d83819a1')
+sha256sums_x86_64=('d66e360af47e95ae2bbd6de1f409d507ef412a5d975a938a7884dadc4b02e04e')
 
 package() {
   cd "$_name-$pkgver"
