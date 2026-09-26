@@ -40,6 +40,8 @@ const LEFT_W: f32 = {
 };
 /// Inset of a grid cell (and of every track control) inside its slot.
 const CELL_INSET: f32 = 1.5;
+/// How long the trigger animation of a cell lasts.
+const FLASH: Duration = Duration::from_millis(350);
 const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 pub struct App {
@@ -73,6 +75,9 @@ pub struct App {
     rec_track: Option<usize>,
     export_result: Arc<Mutex<Option<String>>>,
     tab: Option<bool>,
+    /// Trigger animations: track, step, and when it fired.
+    flashes: Vec<(usize, usize, Instant)>,
+    last_step: Option<usize>,
     /// The track whose effects window is open, and where it opens.
     fx_open: Option<(usize, Pos2)>,
     /// Looping preview in the effects window: when the next one plays, and the pause in between.
@@ -115,6 +120,8 @@ impl App {
             rec_track: None,
             export_result: Arc::new(Mutex::new(None)),
             tab: None,
+            flashes: Vec::new(),
+            last_step: None,
             fx_open: None,
             fx_loop: None,
             fx_gap: 1.0,
@@ -633,6 +640,21 @@ impl App {
         let playing = self.playing();
         let active = self.shared.active.load(Ordering::Relaxed);
         let playhead = if playing && active == cur { Some(self.shared.step.load(Ordering::Relaxed)) } else { None };
+        // A new step: every audible note that starts on it gets a flash.
+        if playhead != self.last_step {
+            if let Some(h) = playhead {
+                let solo = self.song.any_solo();
+                for (ti, t) in self.song.tracks.iter().enumerate() {
+                    let audible = if solo { t.solo } else { !t.mute };
+                    if audible && t.lanes[cur].cells.get(h).is_some_and(|c| *c != Cell::Off) {
+                        self.flashes.push((ti, h, Instant::now()));
+                    }
+                }
+            }
+            self.last_step = playhead;
+        }
+        self.flashes.retain(|f| f.2.elapsed() < FLASH);
+        let mut ripples: Vec<(Rect, Color32, f32)> = Vec::new();
 
         // Step numbers.
         let (num_rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
@@ -743,7 +765,19 @@ impl App {
                 if dead {
                     c = c.gamma_multiply(0.3);
                 }
-                p.rect_filled(bar, CornerRadius::ZERO, if sounding { th.fg_bright } else { c });
+                p.rect_filled(bar, CornerRadius::ZERO, c);
+                // While a long note sounds, a soft highlight follows the playhead across its steps.
+                if let (true, Some(h)) = (sounding && len > 1, playhead) {
+                    let block = Rect::from_min_size(Pos2::new(cells.left() + cell_w * h as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
+                    p.rect_filled(block, CornerRadius::ZERO, th.fg_bright.gamma_multiply(0.35));
+                }
+                // The trigger: the first step flashes bright and fades, and a ring grows out of it.
+                if let Some(age) = self.flashes.iter().filter(|f| f.0 == ti && f.1 == n).map(|f| f.2.elapsed().as_secs_f32()).reduce(f32::min) {
+                    let t = (age / FLASH.as_secs_f32()).clamp(0.0, 1.0);
+                    let head = Rect::from_min_size(bar.min, Vec2::new((cell_w - 2.0 * CELL_INSET).min(bar.width()), bar.height()));
+                    p.rect_filled(head, CornerRadius::ZERO, th.fg_bright.gamma_multiply((1.0 - t).powi(2)));
+                    ripples.push((head.expand(1.0 + 5.0 * t), c, 1.0 - t));
+                }
                 // Dividers between the steps of a long note.
                 for b in 1..len {
                     let x = bar.left() + cell_w * b as f32 - 1.5;
@@ -756,6 +790,12 @@ impl App {
                     p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.bg);
                 }
             }
+        }
+
+        // Rings last, so they sit on top of the neighbouring cells.
+        let p = ui.painter();
+        for (rect, color, strength) in ripples {
+            p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0, color.gamma_multiply(strength)), StrokeKind::Outside);
         }
 
         if let Some(i) = remove {
