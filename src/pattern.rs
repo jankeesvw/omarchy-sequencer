@@ -328,59 +328,51 @@ impl Song {
         Self::empty(tracks, 135.0, 32)
     }
 
+    /// An empty song to start from: a few drum tracks and nothing on the grid.
+    pub fn blank(samples: &[Arc<Sample>]) -> Self {
+        let idx = |name: &str| samples.iter().position(|s| s.name == name).unwrap_or(0);
+        let tracks = ["kick", "snare", "clap", "hat_closed", "hat_open", "bass_hit"]
+            .iter()
+            .map(|n| {
+                let s = idx(n);
+                Track::new(s, samples[s].default_len())
+            })
+            .collect();
+        Self::empty(tracks, 120.0, 16)
+    }
+
+    /// Clamps everything that came from a file into range and resolves sample names to indexes.
+    pub fn sanitize(&mut self, names: &[String], samples: &[Arc<Sample>]) {
+        self.tracks.truncate(MAX_TRACKS);
+        for (t, name) in self.tracks.iter_mut().zip(names) {
+            t.sample = samples.iter().position(|s| &s.name == name).unwrap_or(0);
+        }
+        for t in &mut self.tracks {
+            t.sample = t.sample.min(samples.len() - 1);
+            t.lanes.resize(PATTERNS, Lane::default());
+            t.lanes.iter_mut().for_each(Lane::sanitize);
+            t.volume = t.volume.clamp(0.0, 1.0);
+            t.pitch = t.pitch.clamp(-24.0, 24.0);
+            t.pan = t.pan.clamp(-1.0, 1.0);
+            t.send = t.send.clamp(0.0, 1.0);
+            t.note_len = t.note_len.clamp(1, 16);
+            t.fx.sanitize();
+        }
+        self.steps.resize(PATTERNS, 16);
+        for s in &mut self.steps {
+            *s = (*s).clamp(1, MAX_STEPS);
+        }
+        self.current = self.current.min(PATTERNS - 1);
+        self.queued = None;
+        self.bpm = self.bpm.clamp(40.0, 300.0);
+        self.swing = self.swing.clamp(0.0, 0.5);
+        self.master = self.master.clamp(0.0, 1.0);
+        self.cutoff = self.cutoff.clamp(0.0, 1.0);
+        self.feedback = self.feedback.clamp(0.0, 0.9);
+        self.delay_steps = self.delay_steps.clamp(1, 16);
+    }
+
     pub fn any_solo(&self) -> bool {
         self.tracks.iter().any(|t| t.solo)
     }
-}
-
-// Saved with sample names next to the indexes, so the file stays valid when samples are added.
-#[derive(Serialize, Deserialize)]
-struct Saved {
-    song: Song,
-    names: Vec<String>,
-}
-
-fn save_path() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("sequencer").join("song.json"))
-}
-
-pub fn save(song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {
-    let names = song.tracks.iter().map(|t| samples[t.sample].name.clone()).collect();
-    let saved = Saved { song: song.clone(), names };
-    let path = save_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(path, serde_json::to_string(&saved)?)
-}
-
-pub fn load(samples: &[Arc<Sample>]) -> Option<Song> {
-    let text = std::fs::read_to_string(save_path()?).ok()?;
-    let Saved { mut song, names } = serde_json::from_str(&text).ok()?;
-    song.tracks.truncate(MAX_TRACKS);
-    if song.tracks.is_empty() || names.len() < song.tracks.len() {
-        return None;
-    }
-    for (t, name) in song.tracks.iter_mut().zip(&names) {
-        t.sample = samples.iter().position(|s| &s.name == name).unwrap_or(0);
-        t.lanes.resize(PATTERNS, Lane::default());
-        t.lanes.iter_mut().for_each(Lane::sanitize);
-        t.volume = t.volume.clamp(0.0, 1.0);
-        t.pitch = t.pitch.clamp(-24.0, 24.0);
-        t.pan = t.pan.clamp(-1.0, 1.0);
-        t.send = t.send.clamp(0.0, 1.0);
-        t.note_len = t.note_len.clamp(1, 16);
-        t.fx.sanitize();
-    }
-    song.steps.resize(PATTERNS, 16);
-    for s in &mut song.steps {
-        *s = (*s).clamp(1, MAX_STEPS);
-    }
-    song.current = song.current.min(PATTERNS - 1);
-    song.queued = None;
-    song.bpm = song.bpm.clamp(40.0, 300.0);
-    song.swing = song.swing.clamp(0.0, 0.5);
-    song.master = song.master.clamp(0.0, 1.0);
-    song.cutoff = song.cutoff.clamp(0.0, 1.0);
-    song.feedback = song.feedback.clamp(0.0, 0.9);
-    song.delay_steps = song.delay_steps.clamp(1, 16);
-    Some(song)
 }

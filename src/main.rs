@@ -1,6 +1,7 @@
 mod audio;
 mod pattern;
 mod samples;
+mod songs;
 mod theme;
 mod ui;
 
@@ -14,14 +15,18 @@ fn main() -> eframe::Result {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!("Usage: sequencer [--play] [--preset demo|rave]");
         println!("  --play           start playing right away");
-        println!("  --preset <name>  start from a preset instead of your saved song");
+        println!("  --preset <name>  start a new song from a preset");
         return Ok(());
     }
     let preset = args.iter().position(|a| a == "--preset").and_then(|i| args.get(i + 1));
-    let song = match preset.map(String::as_str) {
-        Some("rave") => pattern::Song::rave(&samples),
-        Some(_) => pattern::Song::demo(&samples),
-        None => pattern::load(&samples).unwrap_or_else(|| pattern::Song::demo(&samples)),
+    let (name, song) = match preset.map(String::as_str) {
+        Some(preset) => {
+            let (base, song) = if preset == "rave" { ("Rave", pattern::Song::rave(&samples)) } else { ("Demo", pattern::Song::demo(&samples)) };
+            let name = songs::unique(base);
+            let _ = songs::write(&name, &song, &samples);
+            (name, song)
+        }
+        None => songs::open_last(&samples),
     };
     let shared = Arc::new(audio::Shared::new(song.clone()));
     let output = audio::start(samples.clone(), shared.clone());
@@ -44,6 +49,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Sequencer",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, samples, shared, song, output)))),
+        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, samples, shared, name, song, output)))),
     )
 }

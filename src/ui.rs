@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::audio::{self, Output, Recorder, Shared};
-use crate::pattern::{self, Cell, FilterKind, Fx, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
+use crate::pattern::{Cell, FilterKind, Fx, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
 use crate::samples::{self, Kind, Sample};
+use crate::songs;
 use crate::theme::{self, Theme};
 
 const CONTROL_H: f32 = 28.0;
@@ -43,6 +44,12 @@ const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
 pub struct App {
     samples: Vec<Arc<Sample>>,
+    /// Name of the open song (its file in ~/Music/Sequencer), and the name field while you type.
+    song_name: String,
+    name_edit: String,
+    songs_open: bool,
+    settings_open: bool,
+    confirm_delete: Option<String>,
     shared: Arc<Shared>,
     song: Song,
     pushed: Song,
@@ -74,12 +81,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext, samples: Vec<Arc<Sample>>, shared: Arc<Shared>, song: Song, output: Output) -> Self {
+    pub fn new(cc: &eframe::CreationContext, samples: Vec<Arc<Sample>>, shared: Arc<Shared>, song_name: String, song: Song, output: Output) -> Self {
         let theme = Theme::load();
         fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, &theme);
         Self {
             samples,
+            name_edit: song_name.clone(),
+            song_name,
+            songs_open: false,
+            settings_open: false,
+            confirm_delete: None,
             shared,
             pushed: song.clone(),
             saved: song.clone(),
@@ -214,14 +226,70 @@ impl App {
     }
 
     fn save_now(&mut self) {
-        match pattern::save(&self.song, &self.samples) {
+        match songs::write(&self.song_name, &self.song, &self.samples) {
             Ok(()) => {
                 self.saved = self.song.clone();
-                self.say("saved to ~/.config/sequencer/song.json");
+                self.say(format!("saved {}", self.song_name));
             }
             Err(e) => self.say(format!("saving failed: {e}")),
         }
         self.last_save = Instant::now();
+    }
+
+    /// Makes `song` the open song. The current one is saved first.
+    fn switch_to(&mut self, name: String, song: Song) {
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
+        self.song = song;
+        self.song_name = name.clone();
+        self.name_edit = name;
+        self.saved = self.song.clone();
+        self.committed = self.song.clone();
+        self.undo.clear();
+        self.redo.clear();
+        self.fx_open = None;
+        self.fx_loop = None;
+        self.selected = 0;
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
+    }
+
+    fn new_song(&mut self, base: &str, song: Song) {
+        let name = songs::unique(base);
+        self.say(format!("new song: {name}"));
+        self.switch_to(name, song);
+    }
+
+    fn open_song(&mut self, name: &str) {
+        if name == self.song_name {
+            return;
+        }
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
+        match songs::read(name, &self.samples) {
+            Some(song) => {
+                self.switch_to(name.to_owned(), song);
+                self.say(format!("opened {name}"));
+            }
+            None => self.say(format!("could not open {name}")),
+        }
+    }
+
+    fn rename_song(&mut self) {
+        let wanted = songs::clean(&self.name_edit);
+        if wanted == self.song_name {
+            self.name_edit = wanted;
+            return;
+        }
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
+        match songs::rename(&self.song_name, &wanted) {
+            Ok(name) => {
+                self.say(format!("renamed to {name}"));
+                self.song_name = name.clone();
+                self.name_edit = name;
+            }
+            Err(e) => {
+                self.say(format!("renaming failed: {e}"));
+                self.name_edit = self.song_name.clone();
+            }
+        }
     }
 
     fn export(&mut self) {
@@ -337,6 +405,12 @@ impl App {
         if ctrl && pressed(S) {
             self.save_now();
         }
+        if ctrl && pressed(N) {
+            self.new_song("Untitled", Song::blank(&self.samples));
+        }
+        if ctrl && pressed(O) {
+            self.songs_open = !self.songs_open;
+        }
         if ctrl && pressed(E) {
             self.export();
         }
@@ -378,26 +452,21 @@ impl App {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let th = self.theme.clone();
         ui.spacing_mut().interact_size.y = CONTROL_H;
+        let button = |text: &str| egui::Button::new(text).min_size(Vec2::new(CONTROL_H, CONTROL_H));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let playing = self.playing();
             let play = egui::Button::new(egui::RichText::new(if playing { "■  Stop" } else { "▶  Play" }).color(th.bg).strong())
                 .fill(if playing { th.red } else { th.accent })
                 .min_size(Vec2::new(96.0, CONTROL_H));
-            if ui.add(play).clicked() {
+            if ui.add(play).on_hover_text("[Space]").clicked() {
                 self.toggle_play();
             }
             section_gap(ui);
             label(ui, &th, "BPM");
             ui.add_sized([52.0, CONTROL_H], egui::DragValue::new(&mut self.song.bpm).range(40.0..=300.0).speed(0.5).fixed_decimals(0));
-            if ui.add(egui::Button::new("Tap").min_size(Vec2::new(44.0, CONTROL_H))).on_hover_text("tap the tempo [T]").clicked() {
+            if ui.add(button("Tap")).on_hover_text("tap the tempo [T]").clicked() {
                 self.tap();
-            }
-            section_gap(ui);
-            label(ui, &th, "Swing");
-            let mut swing = (self.song.swing * 200.0).round();
-            if ui.add_sized([52.0, CONTROL_H], egui::DragValue::new(&mut swing).range(0.0..=100.0).speed(0.5).fixed_decimals(0).suffix("%")).changed() {
-                self.song.swing = swing / 200.0;
             }
             section_gap(ui);
             label(ui, &th, "Pattern");
@@ -431,114 +500,146 @@ impl App {
                     self.select_pattern(p, true);
                 }
             }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                self.scope(ui);
-                section_gap(ui);
-                for n in [64, 32, 16, 8] {
-                    let on = self.song.steps() == n;
-                    let b = egui::Button::new(egui::RichText::new(n.to_string()).color(if on { th.bg } else { th.fg }))
-                        .fill(if on { th.accent } else { th.bg_light })
-                        .min_size(Vec2::new(36.0, CONTROL_H));
-                    if ui.add(b).clicked() {
-                        self.set_steps(n);
-                    }
+            // Pattern actions.
+            egui::containers::menu::MenuButton::from_button(button("⋯")).ui(ui, |ui| {
+                if ui.button("Random pattern  [R]").clicked() {
+                    self.randomize();
                 }
-                section_gap(ui);
-                if ui.add(egui::Button::new("+").min_size(Vec2::splat(CONTROL_H))).clicked() {
-                    self.set_steps(self.song.steps() + 1);
-                }
-                let mut steps = self.song.steps();
-                if ui.add_sized([44.0, CONTROL_H], egui::DragValue::new(&mut steps).range(1..=MAX_STEPS).speed(0.2)).changed() {
-                    self.set_steps(steps);
-                }
-                if ui.add(egui::Button::new("−").min_size(Vec2::splat(CONTROL_H))).clicked() {
-                    self.set_steps(self.song.steps().saturating_sub(1));
-                }
-                label(ui, &th, "Steps");
-            });
-        });
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.spacing_mut().slider_width = 96.0;
-            let fixed_label = |ui: &mut egui::Ui, text: &str, w: f32| {
-                ui.add_sized([w, CONTROL_H], egui::Label::new(egui::RichText::new(text).color(th.fg_dim).size(12.0)));
-            };
-            fixed_label(ui, "Filter", 44.0);
-            ui.add(egui::Slider::new(&mut self.song.cutoff, 0.0..=1.0).show_value(false)).on_hover_text("master lowpass");
-            section_gap(ui);
-            fixed_label(ui, "Delay", 40.0);
-            egui::ComboBox::from_id_salt("delay")
-                .width(64.0)
-                .selected_text(delay_name(self.song.delay_steps))
-                .show_ui(ui, |ui| {
-                    for d in [1, 2, 3, 4, 6, 8] {
-                        ui.selectable_value(&mut self.song.delay_steps, d, delay_name(d));
-                    }
-                });
-            section_gap(ui);
-            fixed_label(ui, "Feedback", 64.0);
-            ui.add(egui::Slider::new(&mut self.song.feedback, 0.0..=0.85).show_value(false));
-            section_gap(ui);
-            fixed_label(ui, "Volume", 52.0);
-            ui.add(egui::Slider::new(&mut self.song.master, 0.0..=1.0).show_value(false));
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let button = |text: &str| egui::Button::new(text).min_size(Vec2::new(0.0, CONTROL_H));
-                if ui.add(button("Export WAV")).on_hover_text("the current pattern 4 times to ~/Music [Ctrl+E]").clicked() {
-                    self.export();
-                }
-                if ui.add(button("Save")).on_hover_text("[Ctrl+S], also saves automatically").clicked() {
-                    self.save_now();
-                }
-                let presets = egui::containers::menu::MenuButton::from_button(button("Presets"));
-                presets.ui(ui, |ui| {
-                    if ui.button("Demo, 124 BPM").clicked() {
-                        self.song = Song::demo(&self.samples);
-                    }
-                    if ui.button("Rave, 135 BPM").clicked() {
-                        self.song = Song::rave(&self.samples);
-                    }
-                });
-                section_gap(ui);
-                if ui.add_enabled(!self.redo.is_empty(), button("Redo")).on_hover_text("[Ctrl+Shift+Z]").clicked() {
-                    self.undo(true);
-                }
-                if ui.add_enabled(!self.undo.is_empty(), button("Undo")).on_hover_text("[Ctrl+Z]").clicked() {
-                    self.undo(false);
-                }
-                section_gap(ui);
-                if ui.add(button("Clear")).on_hover_text("clear the current pattern [C]").clicked() {
+                if ui.button("Clear pattern  [C]").clicked() {
                     self.clear_pattern();
                 }
-                if ui.add(button("Random")).on_hover_text("[R]").clicked() {
-                    self.randomize();
+                ui.separator();
+                ui.label(egui::RichText::new("Copy this pattern to").color(th.fg_dim).size(11.0));
+                ui.horizontal(|ui| {
+                    for p in 0..PATTERNS {
+                        if p != self.song.current && ui.button(PATTERN_NAMES[p]).clicked() {
+                            self.select_pattern(p, true);
+                        }
+                    }
+                });
+            });
+            section_gap(ui);
+            label(ui, &th, "Steps");
+            if ui.add(button("−")).on_hover_text("[←]").clicked() {
+                self.set_steps(self.song.steps().saturating_sub(1));
+            }
+            let mut steps = self.song.steps();
+            if ui.add_sized([44.0, CONTROL_H], egui::DragValue::new(&mut steps).range(1..=MAX_STEPS).speed(0.2)).changed() {
+                self.set_steps(steps);
+            }
+            if ui.add(button("+")).on_hover_text("[→]").clicked() {
+                self.set_steps(self.song.steps() + 1);
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if ui.add(button("Export")).on_hover_text("the current pattern 4 times to a WAV in ~/Music [Ctrl+E]").clicked() {
+                    self.export();
+                }
+                if ui.add(button("Songs")).on_hover_text("open, create and delete songs [Ctrl+O]").clicked() {
+                    self.songs_open = !self.songs_open;
+                }
+                // The song name opens the settings of the whole song.
+                let settings_open = self.settings_open;
+                let song_button = egui::Button::new(egui::RichText::new(format!("♪  {}", self.song_name)).color(if settings_open { th.bg } else { th.fg_bright }))
+                    .fill(if settings_open { th.accent } else { th.bg_light })
+                    .min_size(Vec2::new(CONTROL_H, CONTROL_H));
+                if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and the mix").clicked() {
+                    self.settings_open = !self.settings_open;
+                }
+                section_gap(ui);
+                if ui.add_enabled(!self.redo.is_empty(), button("↷")).on_hover_text("redo [Ctrl+Shift+Z]").clicked() {
+                    self.undo(true);
+                }
+                if ui.add_enabled(!self.undo.is_empty(), button("↶")).on_hover_text("undo [Ctrl+Z]").clicked() {
+                    self.undo(false);
                 }
             });
         });
     }
 
-    fn scope(&self, ui: &mut egui::Ui) {
-        let th = &self.theme;
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(160.0, CONTROL_H), Sense::hover());
-        let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::ZERO, th.bg_darker);
-        let data = self.shared.scope.lock().unwrap().clone();
-        let pts: Vec<Pos2> = data
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                Pos2::new(
-                    rect.left() + rect.width() * i as f32 / (data.len() - 1) as f32,
-                    rect.center().y - (s * 2.5).clamp(-1.0, 1.0) * rect.height() * 0.45,
-                )
-            })
-            .collect();
-        p.add(egui::Shape::line(pts, Stroke::new(1.0, th.accent)));
+    fn master_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let th = self.theme.clone();
+        let mut open = true;
+        let mut rename = false;
+        let mut tap = false;
+        egui::Window::new("Song settings")
+            .id(egui::Id::new("settings_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::RIGHT_TOP, Vec2::new(-12.0, 52.0))
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                ui.spacing_mut().slider_width = 150.0;
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                section(ui, &th, "Song");
+                egui::Grid::new("song_name").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Name");
+                    let name = ui.add_sized([236.0, CONTROL_H], egui::TextEdit::singleline(&mut self.name_edit).vertical_align(egui::Align::Center));
+                    if name.lost_focus() {
+                        rename = true;
+                    }
+                    ui.end_row();
+                });
+                let song = &mut self.song;
+                section(ui, &th, "Tempo");
+                egui::Grid::new("song_tempo").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "BPM");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut song.bpm, 40.0..=300.0).step_by(1.0).fixed_decimals(0));
+                        if ui.button("Tap").on_hover_text("[T]").clicked() {
+                            tap = true;
+                        }
+                    });
+                    ui.end_row();
+                    row_label(ui, &th, "Swing");
+                    ui.add(egui::Slider::new(&mut song.swing, 0.0..=0.5).custom_formatter(|v, _| format!("{:.0}%", v * 200.0)));
+                    ui.end_row();
+                });
+                section(ui, &th, "Filter");
+                egui::Grid::new("master_filter").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Lowpass");
+                    ui.add(egui::Slider::new(&mut song.cutoff, 0.0..=1.0).custom_formatter(|v, _| {
+                        if v >= 0.995 { "open".into() } else { format!("{:.0} Hz", 60.0 * (20_000.0f64 / 60.0).powf(v)) }
+                    }))
+                    .on_hover_text("a lowpass over the whole mix, for sweeps");
+                    ui.end_row();
+                });
+                section(ui, &th, "Delay");
+                egui::Grid::new("master_delay").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Time");
+                    ui.horizontal(|ui| {
+                        for d in [1u8, 2, 3, 4, 6, 8] {
+                            ui.selectable_value(&mut song.delay_steps, d, delay_name(d));
+                        }
+                    });
+                    ui.end_row();
+                    row_label(ui, &th, "Feedback");
+                    ui.add(egui::Slider::new(&mut song.feedback, 0.0..=0.85).custom_formatter(|v, _| format!("{:.0}%", v / 0.85 * 100.0)));
+                    ui.end_row();
+                });
+                ui.label(egui::RichText::new("How much of each track goes in: Delay in its FX window.").color(th.fg_dim).size(11.0));
+                section(ui, &th, "Volume");
+                egui::Grid::new("master_out").num_columns(2).show(ui, |ui| {
+                    row_label(ui, &th, "Master");
+                    ui.add(amount(&mut song.master));
+                    ui.end_row();
+                });
+            });
+        if rename {
+            self.rename_song();
+        }
+        if tap {
+            self.tap();
+        }
+        if !open {
+            self.settings_open = false;
+            self.rename_song();
+        }
     }
 
     fn grid(&mut self, ui: &mut egui::Ui) {
@@ -548,11 +649,8 @@ impl App {
         // Rows sit as close together as the cells in a row: the only gap is the cell inset.
         ui.spacing_mut().item_spacing.y = 0.0;
         let avail = ui.available_width() - LEFT_W - 1.0;
-        // Square cells: the largest size that fits both the width and the height.
-        let rows = self.song.tracks.len() as f32;
-        let fit_w = avail / steps as f32;
-        let fit_h = (self.view_h - 70.0) / rows;
-        let cell_w = fit_w.min(fit_h).clamp(24.0, 48.0).floor();
+        // Square cells of a fixed size; they only shrink when the steps don't fit the width.
+        let cell_w = (avail / steps as f32).min(30.0).max(22.0).floor();
         let row_h = cell_w;
         let width = LEFT_W + cell_w * steps as f32;
         let playing = self.playing();
@@ -1014,6 +1112,106 @@ impl App {
         }
     }
 
+    fn songs_window(&mut self, ctx: &egui::Context) {
+        if !self.songs_open {
+            return;
+        }
+        let th = self.theme.clone();
+        let mut open = true;
+        let mut action: Option<(&str, String)> = None;
+        egui::Window::new("Songs")
+            .id(egui::Id::new("songs_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::RIGHT_TOP, Vec2::new(-12.0, 52.0))
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                section(ui, &th, "New song");
+                ui.horizontal(|ui| {
+                    if ui.add(egui::Button::new("+  Empty").min_size(Vec2::new(0.0, CONTROL_H))).on_hover_text("[Ctrl+N]").clicked() {
+                        action = Some(("new", "Untitled".into()));
+                    }
+                    if ui.add(egui::Button::new("Demo").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                        action = Some(("demo", "Demo".into()));
+                    }
+                    if ui.add(egui::Button::new("Rave").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                        action = Some(("rave", "Rave".into()));
+                    }
+                });
+                ui.add_space(6.0);
+                section(ui, &th, "Your songs");
+                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                    for info in songs::list() {
+                        let current = info.name == self.song_name;
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
+                        let p = ui.painter();
+                        let fill = if current { th.selection } else if resp.hovered() { th.bg_light } else { th.bg_dark };
+                        p.rect_filled(rect, CornerRadius::ZERO, fill);
+                        if current {
+                            p.rect_filled(Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height())), CornerRadius::ZERO, th.accent);
+                        }
+                        p.text(rect.left_top() + Vec2::new(12.0, 7.0), Align2::LEFT_TOP, &info.name, FontId::monospace(13.0), th.fg_bright);
+                        let meta = format!("{:.0} BPM · {} tracks · {}", info.bpm, info.tracks, songs::ago(info.modified));
+                        p.text(rect.left_top() + Vec2::new(12.0, 25.0), Align2::LEFT_TOP, meta, FontId::monospace(11.0), th.fg_dim);
+
+                        // Delete asks once more before it removes the file.
+                        let del = Rect::from_center_size(Pos2::new(rect.right() - 40.0, rect.center().y), Vec2::new(64.0, CONTROL_H));
+                        let asking = self.confirm_delete.as_deref() == Some(info.name.as_str());
+                        if !current && (resp.hovered() || asking) {
+                            let dresp = ui.interact(del, ui.id().with(("del", &info.name)), Sense::click());
+                            let p = ui.painter();
+                            p.rect_filled(del, CornerRadius::ZERO, if asking { th.red } else if dresp.hovered() { th.selection } else { th.bg_light });
+                            p.text(del.center(), Align2::CENTER_CENTER, if asking { "Sure?" } else { "Delete" }, FontId::monospace(11.0), if asking { th.bg } else { th.fg_dim });
+                            if dresp.clicked() {
+                                action = Some((if asking { "delete" } else { "ask" }, info.name.clone()));
+                            }
+                        }
+                        if resp.clicked() && action.is_none() {
+                            action = Some(("open", info.name.clone()));
+                        }
+                        ui.add_space(3.0);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(format!("Songs save themselves as you work, in {}", songs::dir().display())).color(th.fg_dim).size(11.0));
+            });
+        match action {
+            Some(("new", base)) => {
+                self.new_song(&base, Song::blank(&self.samples));
+                self.songs_open = false;
+            }
+            Some(("demo", base)) => {
+                self.new_song(&base, Song::demo(&self.samples));
+                self.songs_open = false;
+            }
+            Some(("rave", base)) => {
+                self.new_song(&base, Song::rave(&self.samples));
+                self.songs_open = false;
+            }
+            Some(("open", name)) => {
+                self.confirm_delete = None;
+                self.open_song(&name);
+                self.songs_open = false;
+            }
+            Some(("ask", name)) => self.confirm_delete = Some(name),
+            Some(("delete", name)) => {
+                self.confirm_delete = None;
+                match songs::delete(&name) {
+                    Ok(()) => self.say(format!("deleted {name}")),
+                    Err(e) => self.say(format!("deleting failed: {e}")),
+                }
+            }
+            _ => {}
+        }
+        if !open {
+            self.songs_open = false;
+            self.confirm_delete = None;
+        }
+    }
+
     fn status(&mut self, ui: &mut egui::Ui) {
         let th = self.theme.clone();
         let exported = self.export_result.lock().unwrap().take();
@@ -1103,6 +1301,8 @@ impl eframe::App for App {
             });
 
         self.fx_window(&ctx);
+        self.songs_window(&ctx);
+        self.master_window(&ctx);
 
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         self.history(pointer_down);
@@ -1114,7 +1314,7 @@ impl eframe::App for App {
         }
         // Autosave, at most once every few seconds.
         if self.song != self.saved && self.last_save.elapsed() > Duration::from_secs(3) {
-            let _ = pattern::save(&self.song, &self.samples);
+            let _ = songs::write(&self.song_name, &self.song, &self.samples);
             self.saved = self.song.clone();
             self.last_save = Instant::now();
         }
@@ -1138,7 +1338,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let _ = pattern::save(&self.song, &self.samples);
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
     }
 }
 
