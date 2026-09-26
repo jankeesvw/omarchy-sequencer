@@ -2,7 +2,7 @@
 
 A step sequencer for [Omarchy](https://omarchy.org). Click a beat together on the grid, stretch notes across as many steps as you like, give every track its own effects, and record your own sounds from the microphone. It comes with a TR-808 kit, riffs, 90s rave stabs and vocals, and one click gets you more: free sound packs for lo-fi drums, hand percussion, basses, body percussion and 8-bit blips.
 
-![Sequencer playing the Late Night preset in Tokyo Night](media/hero.webp)
+![Sequencer playing Late Night in Tokyo Night, full screen on Omarchy](media/hero.webp)
 
 Open it, press **Space**, and the groove starts. Everything you change is heard on the next step, and every song saves itself while you work. When you like it, **Export** writes it to a WAV. The whole app wears your Omarchy theme and follows it when you switch.
 
@@ -18,14 +18,6 @@ curl -fsSL https://raw.githubusercontent.com/jankeesvw/omarchy-sequencer/main/in
 
 This downloads the latest release and puts `omarchy-sequencer` in `~/.local/bin`, with a launcher entry and an icon, so **Sequencer** shows up under Super + Space. [install.sh](install.sh) is short, so read it first if you like. Prefer to build it yourself? See [Build from source](#build-from-source).
 
-A floating window suits it. Add this to `~/.config/hypr/windows.lua`:
-
-```lua
-o.window("^omarchy-sequencer$", { float = true })
-o.window("^omarchy-sequencer$", { size = { 1280, 640 } })
-o.window("^omarchy-sequencer$", { center = true })
-```
-
 ## What it does
 
 ### Plays a groove in eight patterns
@@ -40,7 +32,7 @@ The letters A to H are eight patterns, each with its own notes and length. Pick 
 
 Click or drag across the grid to draw, click a note to erase it, and right-click for an accent. Every track has a length button (L1, L2, L4, L8 or L16) for the notes you draw next, so a bass line or a chord can hold for a beat, a bar or anything in between, and it sounds exactly as long as it looks. Scroll over a note to make it longer or shorter. Every cell flashes and sends out a ring when it plays.
 
-![Drawing a beat from an empty song: kick, snare, hats and a bass with long notes](media/anim-draw.webp)
+![Drawing into an empty pattern: kick, clap, hats, a dragged shaker line, a bass and a long Rhodes chord](media/anim-draw.webp)
 
 ▶ [The same with sound](media/draw.mp4)
 

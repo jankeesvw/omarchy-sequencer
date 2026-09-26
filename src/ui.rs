@@ -1866,7 +1866,7 @@ fn apply_theme(ctx: &egui::Context, th: &Theme) {
 }
 
 fn section_gap(ui: &mut egui::Ui) {
-    ui.add_space(12.0);
+    ui.add_space(8.0);
 }
 
 /// A 0..1 slider that shows its value as a percentage.
