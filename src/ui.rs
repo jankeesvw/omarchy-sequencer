@@ -40,6 +40,8 @@ const LEFT_W: f32 = {
 };
 /// Inset of a grid cell (and of every track control) inside its slot.
 const CELL_INSET: f32 = 1.5;
+/// Size of a grid cell; the rows are as tall.
+const CELL: f32 = 30.0;
 /// How long the trigger animation of a cell lasts.
 const FLASH: Duration = Duration::from_millis(350);
 const PATTERN_NAMES: [&str; PATTERNS] = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -632,11 +634,10 @@ impl App {
         let cur = self.song.current;
         // Rows sit as close together as the cells in a row: the only gap is the cell inset.
         ui.spacing_mut().item_spacing.y = 0.0;
-        let avail = ui.available_width() - LEFT_W - 1.0;
-        // Square cells of a fixed size; they only shrink when the steps don't fit the width.
-        let cell_w = (avail / steps as f32).min(30.0).max(22.0).floor();
-        let row_h = cell_w;
-        let width = LEFT_W + cell_w * steps as f32;
+        // Fixed size cells: when the steps don't fit, the grid scrolls instead of squashing.
+        let cell_w = CELL;
+        let row_h = CELL;
+        let grid_w = cell_w * steps as f32;
         let playing = self.playing();
         let active = self.shared.active.load(Ordering::Relaxed);
         let playhead = if playing && active == cur { Some(self.shared.step.load(Ordering::Relaxed)) } else { None };
@@ -656,147 +657,49 @@ impl App {
         self.flashes.retain(|f| f.2.elapsed() < FLASH);
         let mut ripples: Vec<(Rect, Color32, f32)> = Vec::new();
 
-        // Step numbers.
-        let (num_rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
-        let p = ui.painter_at(num_rect);
-        let mut hx = num_rect.left() + STRIP_W;
-        for (name, w) in COLUMNS {
-            let pos = if name == "Sample" { Pos2::new(hx + 6.0, num_rect.center().y) } else { Pos2::new(hx + w / 2.0, num_rect.center().y) };
-            let align = if name == "Sample" { Align2::LEFT_CENTER } else { Align2::CENTER_CENTER };
-            p.text(pos, align, name, FontId::monospace(10.0), th.fg_dim);
-            hx += w + COL_GAP;
-        }
-        for s in 0..steps {
-            let x = num_rect.left() + LEFT_W + cell_w * (s as f32 + 0.5);
-            let color = if playhead == Some(s) { th.fg_bright } else if s % 4 == 0 { th.fg } else { th.fg_dim };
-            if cell_w >= 20.0 || s % 4 == 0 {
-                p.text(Pos2::new(x, num_rect.center().y), Align2::CENTER_CENTER, format!("{}", s + 1), FontId::monospace(10.0), color);
-            }
-        }
-
         let mut remove = None;
         let mut move_up = None;
-        for ti in 0..self.song.tracks.len() {
-            let (row, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
-            self.track_controls(ui, ti, Rect::from_min_size(row.min, Vec2::new(LEFT_W, row_h)), &mut remove, &mut move_up);
-
-            let cells = Rect::from_min_size(row.min + Vec2::new(LEFT_W, 0.0), Vec2::new(cell_w * steps as f32, row_h));
-            let resp = ui.interact(cells, ui.id().with(("cells", ti)), Sense::click_and_drag());
-            let hit = |pos: Pos2| (((pos.x - cells.left()) / cell_w).floor().max(0.0) as usize).min(steps - 1);
-
-            // Click or drag draws notes (as long as the track's L), clicking a note erases it,
-            // right-click toggles an accent and scrolling over a note makes it longer or shorter.
-            let pointer = ui.input(|i| i.pointer.clone());
-            if pointer.primary_pressed() && resp.hovered() {
-                if let Some(pos) = pointer.interact_pos() {
-                    self.selected = ti;
-                    let empty = self.song.tracks[ti].lanes[cur].note_at(hit(pos)).is_none();
-                    self.paint = Some(if empty { Cell::On } else { Cell::Off });
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            // The track controls stay put…
+            ui.vertical(|ui| {
+                let (head, _) = ui.allocate_exact_size(Vec2::new(LEFT_W, 18.0), Sense::hover());
+                let p = ui.painter_at(head);
+                let mut hx = head.left() + STRIP_W;
+                for (name, w) in COLUMNS {
+                    let pos = if name == "Sample" { Pos2::new(hx + 6.0, head.center().y) } else { Pos2::new(hx + w / 2.0, head.center().y) };
+                    let align = if name == "Sample" { Align2::LEFT_CENTER } else { Align2::CENTER_CENTER };
+                    p.text(pos, align, name, FontId::monospace(10.0), th.fg_dim);
+                    hx += w + COL_GAP;
                 }
-            }
-            if !pointer.primary_down() {
-                self.paint = None;
-            }
-            if let (Some(paint), Some(pos)) = (self.paint, pointer.hover_pos()) {
-                if cells.contains(pos) && pointer.primary_down() {
-                    let track = &mut self.song.tracks[ti];
-                    let len = track.note_len;
-                    let lane = &mut track.lanes[cur];
-                    if paint == Cell::Off {
-                        lane.erase(hit(pos));
-                    } else {
-                        lane.place(hit(pos), Cell::On, len, steps);
+                for ti in 0..self.song.tracks.len() {
+                    let (row, _) = ui.allocate_exact_size(Vec2::new(LEFT_W, row_h), Sense::hover());
+                    self.track_controls(ui, ti, row, &mut remove, &mut move_up);
+                }
+            });
+            // …and the grid scrolls sideways when it is wider than the window.
+            egui::ScrollArea::horizontal().id_salt("grid_scroll").auto_shrink([false, true]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                ui.vertical(|ui| {
+                    let (head, _) = ui.allocate_exact_size(Vec2::new(grid_w, 18.0), Sense::hover());
+                    let p = ui.painter_at(head);
+                    for s in 0..steps {
+                        let x = head.left() + cell_w * (s as f32 + 0.5);
+                        let color = if playhead == Some(s) { th.fg_bright } else if s % 4 == 0 { th.fg } else { th.fg_dim };
+                        p.text(Pos2::new(x, head.center().y), Align2::CENTER_CENTER, format!("{}", s + 1), FontId::monospace(10.0), color);
                     }
-                }
-            }
-            if resp.secondary_clicked() {
-                if let Some(pos) = pointer.interact_pos() {
-                    let track = &mut self.song.tracks[ti];
-                    let len = track.note_len;
-                    let lane = &mut track.lanes[cur];
-                    match lane.note_at(hit(pos)) {
-                        Some(n) => {
-                            let c = &mut lane.cells[n];
-                            *c = if *c == Cell::Accent { Cell::On } else { Cell::Accent };
-                        }
-                        None => lane.place(hit(pos), Cell::Accent, len, steps),
+                    for ti in 0..self.song.tracks.len() {
+                        let (cells, _) = ui.allocate_exact_size(Vec2::new(grid_w, row_h), Sense::hover());
+                        self.cell_row(ui, ti, cells, steps, cur, playhead, &mut ripples);
                     }
-                }
-            }
-            if resp.hovered() {
-                if let Some(pos) = pointer.hover_pos() {
-                    let s = hit(pos);
-                    if self.song.tracks[ti].lanes[cur].note_at(s).is_some() {
-                        let dy = ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta.y));
-                        self.wheel += dy;
-                        let notches = (self.wheel / 30.0).trunc();
-                        if notches != 0.0 {
-                            self.wheel -= notches * 30.0;
-                            self.song.tracks[ti].lanes[cur].resize(s, notches as i32, steps);
-                        }
+                    // Rings last, so they sit on top of the neighbouring cells.
+                    let p = ui.painter();
+                    for (rect, color, strength) in ripples.drain(..) {
+                        p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0, color.gamma_multiply(strength)), StrokeKind::Outside);
                     }
-                }
-            }
-
-            let p = ui.painter();
-            let track = &self.song.tracks[ti];
-            let lane = &track.lanes[cur];
-            let color = self.kind_color(self.samples[track.sample].kind);
-            let dead = if self.song.any_solo() { !track.solo } else { track.mute };
-            for s in 0..steps {
-                let r = Rect::from_min_size(Pos2::new(cells.left() + cell_w * s as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
-                let beat = (s / 4) % 2 == 0;
-                let mut base = if beat { th.bg_light } else { th.bg_dark };
-                if playhead == Some(s) {
-                    base = th.accent.gamma_multiply(0.25);
-                }
-                p.rect_filled(r, CornerRadius::ZERO, base);
-            }
-            for n in 0..steps {
-                let accent = match lane.cells[n] {
-                    Cell::Off => continue,
-                    Cell::On => false,
-                    Cell::Accent => true,
-                };
-                let len = (lane.lens[n] as usize).min(steps - n);
-                let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
-                let sounding = playhead.is_some_and(|h| h >= n && h < n + len) && !dead;
-                let mut c = if accent { color } else { color.gamma_multiply(0.7) };
-                if dead {
-                    c = c.gamma_multiply(0.3);
-                }
-                p.rect_filled(bar, CornerRadius::ZERO, c);
-                // While a long note sounds, a soft highlight follows the playhead across its steps.
-                if let (true, Some(h)) = (sounding && len > 1, playhead) {
-                    let block = Rect::from_min_size(Pos2::new(cells.left() + cell_w * h as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
-                    p.rect_filled(block, CornerRadius::ZERO, th.fg_bright.gamma_multiply(0.35));
-                }
-                // The trigger: the first step flashes bright and fades, and a ring grows out of it.
-                if let Some(age) = self.flashes.iter().filter(|f| f.0 == ti && f.1 == n).map(|f| f.2.elapsed().as_secs_f32()).reduce(f32::min) {
-                    let t = (age / FLASH.as_secs_f32()).clamp(0.0, 1.0);
-                    let head = Rect::from_min_size(bar.min, Vec2::new((cell_w - 2.0 * CELL_INSET).min(bar.width()), bar.height()));
-                    p.rect_filled(head, CornerRadius::ZERO, th.fg_bright.gamma_multiply((1.0 - t).powi(2)));
-                    ripples.push((head.expand(1.0 + 5.0 * t), c, 1.0 - t));
-                }
-                // Dividers between the steps of a long note.
-                for b in 1..len {
-                    let x = bar.left() + cell_w * b as f32 - 1.5;
-                    p.line_segment([Pos2::new(x, bar.top() + 4.0), Pos2::new(x, bar.bottom() - 4.0)], Stroke::new(1.0, th.bg.gamma_multiply(0.6)));
-                }
-                if accent {
-                    p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width(), 3.0)), CornerRadius::ZERO, th.fg_bright);
-                }
-                if len > 1 && cell_w >= 18.0 {
-                    p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.bg);
-                }
-            }
-        }
-
-        // Rings last, so they sit on top of the neighbouring cells.
-        let p = ui.painter();
-        for (rect, color, strength) in ripples {
-            p.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0, color.gamma_multiply(strength)), StrokeKind::Outside);
-        }
+                });
+            });
+        });
 
         if let Some(i) = remove {
             if self.song.tracks.len() > 1 {
@@ -807,6 +710,122 @@ impl App {
         if let Some(i) = move_up {
             if i > 0 {
                 self.song.tracks.swap(i, i - 1);
+            }
+        }
+    }
+
+    /// The cells of one track: drawing notes with the mouse, and painting them.
+    #[allow(clippy::too_many_arguments)]
+    fn cell_row(&mut self, ui: &mut egui::Ui, ti: usize, cells: Rect, steps: usize, cur: usize, playhead: Option<usize>, ripples: &mut Vec<(Rect, Color32, f32)>) {
+        let th = self.theme.clone();
+        let cell_w = CELL;
+        let resp = ui.interact(cells, ui.id().with(("cells", ti)), Sense::click_and_drag());
+        let hit = |pos: Pos2| (((pos.x - cells.left()) / cell_w).floor().max(0.0) as usize).min(steps - 1);
+
+        // Click or drag draws notes (as long as the track's L), clicking a note erases it,
+        // right-click toggles an accent and scrolling over a note makes it longer or shorter.
+        let pointer = ui.input(|i| i.pointer.clone());
+        if pointer.primary_pressed() && resp.hovered() {
+            if let Some(pos) = pointer.interact_pos() {
+                self.selected = ti;
+                let empty = self.song.tracks[ti].lanes[cur].note_at(hit(pos)).is_none();
+                self.paint = Some(if empty { Cell::On } else { Cell::Off });
+            }
+        }
+        if !pointer.primary_down() {
+            self.paint = None;
+        }
+        if let (Some(paint), Some(pos)) = (self.paint, pointer.hover_pos()) {
+            if cells.contains(pos) && pointer.primary_down() {
+                let track = &mut self.song.tracks[ti];
+                let len = track.note_len;
+                let lane = &mut track.lanes[cur];
+                if paint == Cell::Off {
+                    lane.erase(hit(pos));
+                } else {
+                    lane.place(hit(pos), Cell::On, len, steps);
+                }
+            }
+        }
+        if resp.secondary_clicked() {
+            if let Some(pos) = pointer.interact_pos() {
+                let track = &mut self.song.tracks[ti];
+                let len = track.note_len;
+                let lane = &mut track.lanes[cur];
+                match lane.note_at(hit(pos)) {
+                    Some(n) => {
+                        let c = &mut lane.cells[n];
+                        *c = if *c == Cell::Accent { Cell::On } else { Cell::Accent };
+                    }
+                    None => lane.place(hit(pos), Cell::Accent, len, steps),
+                }
+            }
+        }
+        if resp.hovered() {
+            if let Some(pos) = pointer.hover_pos() {
+                let s = hit(pos);
+                if self.song.tracks[ti].lanes[cur].note_at(s).is_some() {
+                    let dy = ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta.y));
+                    self.wheel += dy;
+                    let notches = (self.wheel / 30.0).trunc();
+                    if notches != 0.0 {
+                        self.wheel -= notches * 30.0;
+                        self.song.tracks[ti].lanes[cur].resize(s, notches as i32, steps);
+                    }
+                }
+            }
+        }
+
+        let p = ui.painter();
+        let track = &self.song.tracks[ti];
+        let lane = &track.lanes[cur];
+        let color = self.kind_color(self.samples[track.sample].kind);
+        let dead = if self.song.any_solo() { !track.solo } else { track.mute };
+        for s in 0..steps {
+            let r = Rect::from_min_size(Pos2::new(cells.left() + cell_w * s as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
+            let beat = (s / 4) % 2 == 0;
+            let mut base = if beat { th.bg_light } else { th.bg_dark };
+            if playhead == Some(s) {
+                base = th.accent.gamma_multiply(0.25);
+            }
+            p.rect_filled(r, CornerRadius::ZERO, base);
+        }
+        for n in 0..steps {
+            let accent = match lane.cells[n] {
+                Cell::Off => continue,
+                Cell::On => false,
+                Cell::Accent => true,
+            };
+            let len = (lane.lens[n] as usize).min(steps - n);
+            let bar = Rect::from_min_size(Pos2::new(cells.left() + cell_w * n as f32, cells.top()), Vec2::new(cell_w * len as f32, cells.height())).shrink(CELL_INSET);
+            let sounding = playhead.is_some_and(|h| h >= n && h < n + len) && !dead;
+            let mut c = if accent { color } else { color.gamma_multiply(0.7) };
+            if dead {
+                c = c.gamma_multiply(0.3);
+            }
+            p.rect_filled(bar, CornerRadius::ZERO, c);
+            // While a long note sounds, a soft highlight follows the playhead across its steps.
+            if let (true, Some(h)) = (sounding && len > 1, playhead) {
+                let block = Rect::from_min_size(Pos2::new(cells.left() + cell_w * h as f32, cells.top()), Vec2::new(cell_w, cells.height())).shrink(CELL_INSET);
+                p.rect_filled(block, CornerRadius::ZERO, th.fg_bright.gamma_multiply(0.35));
+            }
+            // The trigger: the first step flashes bright and fades, and a ring grows out of it.
+            if let Some(age) = self.flashes.iter().filter(|f| f.0 == ti && f.1 == n).map(|f| f.2.elapsed().as_secs_f32()).reduce(f32::min) {
+                let t = (age / FLASH.as_secs_f32()).clamp(0.0, 1.0);
+                let head = Rect::from_min_size(bar.min, Vec2::new((cell_w - 2.0 * CELL_INSET).min(bar.width()), bar.height()));
+                p.rect_filled(head, CornerRadius::ZERO, th.fg_bright.gamma_multiply((1.0 - t).powi(2)));
+                ripples.push((head.expand(1.0 + 5.0 * t), c, 1.0 - t));
+            }
+            // Dividers between the steps of a long note.
+            for b in 1..len {
+                let x = bar.left() + cell_w * b as f32 - 1.5;
+                p.line_segment([Pos2::new(x, bar.top() + 4.0), Pos2::new(x, bar.bottom() - 4.0)], Stroke::new(1.0, th.bg.gamma_multiply(0.6)));
+            }
+            if accent {
+                p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width(), 3.0)), CornerRadius::ZERO, th.fg_bright);
+            }
+            if len > 1 && cell_w >= 18.0 {
+                p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), th.bg);
             }
         }
     }
@@ -1322,7 +1341,7 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(th.bg).inner_margin(egui::Margin::symmetric(12, 10)))
             .show(ui, |ui| {
                 self.view_h = ui.available_height();
-                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     self.grid(ui);
                     ui.add_space(6.0);
                     if ui.button("+ Track").clicked() {
