@@ -45,6 +45,8 @@ struct Voice {
     rate: f64,
     gain: f32,
     fade: Option<f32>,
+    /// Frames tot de noot wordt afgekapt; None speelt de sample helemaal uit.
+    gate: Option<f64>,
 }
 
 pub struct Engine {
@@ -72,7 +74,7 @@ impl Engine {
         }
     }
 
-    fn trigger(&mut self, sample: usize, track: Option<usize>, gain: f32, pitch: f32) {
+    fn trigger(&mut self, sample: usize, track: Option<usize>, gain: f32, pitch: f32, gate: Option<f64>) {
         // Eén stem per track: de vorige wordt kort uitgefade (choke), dat klinkt strak bij hats en riffs.
         if track.is_some() {
             for v in self.voices.iter_mut().filter(|v| v.track == track && v.fade.is_none()) {
@@ -84,7 +86,7 @@ impl Engine {
         }
         let s = &self.samples[sample];
         let rate = s.rate as f64 / self.out_rate * 2f64.powf(pitch as f64 / 12.0);
-        self.voices.push(Voice { sample, track, pos: 0.0, rate, gain, fade: None });
+        self.voices.push(Voice { sample, track, pos: 0.0, rate, gain, fade: None, gate });
     }
 
     fn step(&mut self, pattern: &Pattern) {
@@ -96,7 +98,10 @@ impl Engine {
             let audible = if solo { t.solo } else { !t.mute };
             if cell != Cell::Off && audible {
                 let accent = if cell == Cell::Accent { 1.0 } else { 0.62 };
-                self.trigger(t.sample, Some(i), t.volume * accent, t.pitch);
+                // Lange noten (meer dan één blokje) klinken precies zo lang als ze in het grid staan.
+                let len = t.lens[step] as f64;
+                let gate = (len > 1.0).then(|| len * self.out_rate * 60.0 / pattern.bpm as f64 / 4.0);
+                self.trigger(t.sample, Some(i), t.volume * accent, t.pitch, gate);
                 self.shared.levels[i].store(accent.to_bits(), Ordering::Relaxed);
             }
         }
@@ -113,7 +118,7 @@ impl Engine {
             _ => Vec::new(),
         };
         for (sample, gain) in previews {
-            self.trigger(sample, None, gain, 0.0);
+            self.trigger(sample, None, gain, 0.0, None);
         }
         let shared = self.shared.clone();
         let pattern = shared.pattern.lock().unwrap();
@@ -146,6 +151,12 @@ impl Engine {
                 let frac = (v.pos - i as f64) as f32;
                 let s = data[i] + (data[i + 1] - data[i]) * frac;
                 let mut g = v.gain;
+                if let Some(gate) = v.gate.as_mut() {
+                    *gate -= 1.0;
+                    if *gate <= 0.0 && v.fade.is_none() {
+                        v.fade = Some(1.0);
+                    }
+                }
                 if let Some(f) = v.fade.as_mut() {
                     *f -= 1.0 / FADE_FRAMES;
                     g *= f.max(0.0);

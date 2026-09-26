@@ -11,14 +11,24 @@ pub struct Sample {
 pub enum Kind {
     Drum,
     Riff,
+    Rave,
     User,
 }
 
 impl Kind {
+    /// Hoeveel blokjes een nieuwe noot standaard beslaat.
+    pub fn default_len(self) -> u8 {
+        match self {
+            Kind::Drum | Kind::User => 1,
+            Kind::Riff | Kind::Rave => 4,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Kind::Drum => "DRM",
             Kind::Riff => "RIF",
+            Kind::Rave => "90S",
             Kind::User => "USR",
         }
     }
@@ -42,10 +52,17 @@ const RIFFS: [(&str, Kind, &[u8]); 10] = embed!(
     "rhodes_tone", "stab", "neon_pad",
 );
 
+// Zelf gesynthetiseerd met tools/synth90s.py.
+const RAVE: [(&str, Kind, &[u8]); 6] = embed!(
+    Kind::Rave,
+    "rave_stab", "hoover", "acid_303", "reese", "m1_organ", "rave_piano",
+);
+
 pub fn load_all() -> Vec<Sample> {
     let mut out: Vec<Sample> = DRUMS
         .iter()
         .chain(RIFFS.iter())
+        .chain(RAVE.iter())
         .filter_map(|(name, kind, bytes)| decode(name, *kind, std::io::Cursor::new(*bytes)))
         .collect();
 

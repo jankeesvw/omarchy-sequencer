@@ -19,7 +19,7 @@ const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const YELLOW: Color32 = Color32::from_rgb(255, 242, 0);
 const TEXT: Color32 = Color32::from_rgb(200, 190, 255);
 
-const LEFT_W: f32 = 362.0;
+const LEFT_W: f32 = 400.0;
 
 pub struct App {
     samples: Arc<Vec<Sample>>,
@@ -28,6 +28,7 @@ pub struct App {
     pushed: Pattern,
     output: Output,
     paint: Option<Cell>,
+    wheel: f32,
     meters: [f32; MAX_TRACKS],
     last_save: Instant,
     saved_pat: Pattern,
@@ -53,6 +54,7 @@ impl App {
             pat,
             output,
             paint: None,
+            wheel: 0.0,
             meters: [0.0; MAX_TRACKS],
             last_save: Instant::now(),
             started: Instant::now(),
@@ -84,7 +86,7 @@ impl App {
         }
         let used: Vec<usize> = self.pat.tracks.iter().map(|t| t.sample).collect();
         let next = (0..self.samples.len()).find(|i| !used.contains(i)).unwrap_or(0);
-        self.pat.tracks.push(Track::new(next));
+        self.pat.tracks.push(Track::new(next, self.samples[next].kind.default_len()));
     }
 
     fn randomize(&mut self) {
@@ -92,21 +94,22 @@ impl App {
         for t in &mut self.pat.tracks {
             let s = &self.samples[t.sample];
             let n = s.name.as_str();
-            for (i, c) in t.cells.iter_mut().enumerate().take(steps) {
+            t.clear();
+            for i in 0..steps {
                 let r = fastrand::f32();
                 let p = match (s.kind, n) {
                     (_, "kick" | "kick_long") => if i % 4 == 0 { 0.9 } else { 0.12 },
                     (_, "snare" | "snare_snappy" | "clap") => if i % 8 == 4 { 0.9 } else { 0.06 },
                     (_, "hat_closed" | "maracas") => if i % 2 == 0 { 0.85 } else { 0.35 },
                     (_, "hat_open") => if i % 4 == 2 { 0.6 } else { 0.03 },
-                    (Kind::Riff, _) => if i % 4 == 0 { 0.3 } else { 0.1 },
+                    (Kind::Riff | Kind::Rave, _) => if i % 4 == 0 { 0.3 } else { 0.1 },
                     _ => 0.12,
                 };
-                *c = if r < p {
-                    if fastrand::f32() < 0.25 { Cell::Accent } else { Cell::On }
-                } else {
-                    Cell::Off
-                };
+                if r < p {
+                    let cell = if fastrand::f32() < 0.25 { Cell::Accent } else { Cell::On };
+                    let len = if t.note_len > 1 && fastrand::bool() { t.note_len / 2 } else { t.note_len };
+                    t.place(i, cell, len, steps);
+                }
             }
         }
         self.say("RANDOMIZE.EXE // PATROON GEGENEREERD");
@@ -127,7 +130,7 @@ impl App {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let (space, left, right, up, down, save, rnd, clear, plus) = ctx.input(|i| {
+        let (space, left, right, up, down, save, rnd, clear, plus, rave) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::ArrowLeft),
@@ -138,6 +141,7 @@ impl App {
                 !i.modifiers.ctrl && i.key_pressed(egui::Key::R),
                 !i.modifiers.ctrl && i.key_pressed(egui::Key::C),
                 i.key_pressed(egui::Key::T),
+                i.key_pressed(egui::Key::Num9),
             )
         });
         if space {
@@ -163,6 +167,10 @@ impl App {
         }
         if clear {
             clear_cells(&mut self.pat);
+        }
+        if rave {
+            self.pat = Pattern::rave(&self.samples);
+            self.say("LOADING RAVE.MOD // 138 BPM // HARDCORE UPROAR");
         }
         if plus {
             self.add_track();
@@ -270,6 +278,10 @@ impl App {
                 clear_cells(&mut self.pat);
                 self.say("PATROON GEWIST");
             }
+            if neon_button(ui, "90S RAVE", GREEN, false, 84.0).on_hover_text("laad een 138 BPM rave-patroon [9]").clicked() {
+                self.pat = Pattern::rave(&self.samples);
+                self.say("LOADING RAVE.MOD // 138 BPM // HARDCORE UPROAR");
+            }
             if neon_button(ui, "SAVE", GREEN, false, 56.0).clicked() {
                 self.save_now();
             }
@@ -310,12 +322,13 @@ impl App {
             let resp = ui.interact(cells, ui.id().with(("cells", ti)), Sense::click_and_drag());
             let hit = |pos: Pos2| ((pos.x - cells.left()) / cell_w).floor() as usize;
 
-            // Links klikken of slepen tekent, rechts zet een accent.
+            // Links klikken of slepen tekent noten (zo lang als de L-instelling van de track),
+            // klikken op een bestaande noot wist hem, rechts zet een accent, scrollen maakt hem langer of korter.
             let pointer = ui.input(|i| i.pointer.clone());
             if pointer.primary_pressed() && resp.hovered() {
                 if let Some(pos) = pointer.interact_pos() {
                     let s = hit(pos).min(steps - 1);
-                    self.paint = Some(if self.pat.tracks[ti].cells[s] == Cell::Off { Cell::On } else { Cell::Off });
+                    self.paint = Some(if self.pat.tracks[ti].note_at(s).is_none() { Cell::On } else { Cell::Off });
                 }
             }
             if !pointer.primary_down() {
@@ -324,14 +337,39 @@ impl App {
             if let (Some(paint), Some(pos)) = (self.paint, pointer.hover_pos()) {
                 if cells.contains(pos) && pointer.primary_down() {
                     let s = hit(pos).min(steps - 1);
-                    self.pat.tracks[ti].cells[s] = paint;
+                    let track = &mut self.pat.tracks[ti];
+                    if paint == Cell::Off {
+                        track.erase(s);
+                    } else {
+                        track.place(s, Cell::On, track.note_len, steps);
+                    }
                 }
             }
             if resp.secondary_clicked() {
                 if let Some(pos) = pointer.interact_pos() {
                     let s = hit(pos).min(steps - 1);
-                    let c = &mut self.pat.tracks[ti].cells[s];
-                    *c = if *c == Cell::Accent { Cell::On } else { Cell::Accent };
+                    let track = &mut self.pat.tracks[ti];
+                    match track.note_at(s) {
+                        Some(n) => {
+                            let c = &mut track.cells[n];
+                            *c = if *c == Cell::Accent { Cell::On } else { Cell::Accent };
+                        }
+                        None => track.place(s, Cell::Accent, track.note_len, steps),
+                    }
+                }
+            }
+            if resp.hovered() {
+                if let Some(pos) = pointer.hover_pos() {
+                    let s = hit(pos).min(steps - 1);
+                    if self.pat.tracks[ti].note_at(s).is_some() {
+                        let dy = ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta.y));
+                        self.wheel += dy;
+                        let notches = (self.wheel / 30.0).trunc();
+                        if notches != 0.0 {
+                            self.wheel -= notches * 30.0;
+                            self.pat.tracks[ti].resize(s, notches as i32, steps);
+                        }
+                    }
                 }
             }
 
@@ -344,22 +382,46 @@ impl App {
                 let base = if beat { Color32::from_rgb(22, 16, 44) } else { Color32::from_rgb(14, 10, 30) };
                 let on_head = playing && s == playhead;
                 p.rect_filled(r, CornerRadius::same(2), if on_head { Color32::from_rgb(50, 44, 20) } else { base });
-                let color = match track.cells[s] {
-                    Cell::Off => None,
-                    Cell::On => Some(CYAN),
-                    Cell::Accent => Some(MAGENTA),
+                p.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.0, DIM), StrokeKind::Inside);
+            }
+            // Noten: één blokje, of een rij aaneengesloten blokjes voor lange noten.
+            for n in 0..steps {
+                let mut c = match track.cells[n] {
+                    Cell::Off => continue,
+                    Cell::On => CYAN,
+                    Cell::Accent => MAGENTA,
                 };
-                if let Some(mut c) = color {
-                    if dead {
-                        c = c.gamma_multiply(0.25);
+                if dead {
+                    c = c.gamma_multiply(0.25);
+                }
+                let len = (track.lens[n] as usize).min(steps - n);
+                let bar = Rect::from_min_size(
+                    Pos2::new(cells.left() + cell_w * n as f32, cells.top()),
+                    Vec2::new(cell_w * len as f32, cells.height()),
+                )
+                .shrink(2.0);
+                let sounding = playing && !dead && playhead >= n && playhead < n + len;
+                p.rect_filled(bar.expand(2.0), CornerRadius::same(3), c.gamma_multiply(if sounding { 0.3 } else { 0.1 }));
+                for b in 0..len {
+                    let block = Rect::from_min_size(Pos2::new(bar.left() + cell_w * b as f32, bar.top()), Vec2::new(cell_w - 4.0, bar.height()));
+                    let block = if b + 1 == len { block } else { block.with_max_x(block.right() + 4.0) };
+                    let fill = if sounding && n + b == playhead {
+                        Color32::WHITE
+                    } else if b == 0 {
+                        c
+                    } else {
+                        c.gamma_multiply(0.6)
+                    };
+                    p.rect_filled(block, CornerRadius::ZERO, fill);
+                    // Voegen tussen de blokjes, zodat je ze kunt tellen.
+                    if b > 0 {
+                        let x = block.left();
+                        p.line_segment([Pos2::new(x, bar.top() + 3.0), Pos2::new(x, bar.bottom() - 3.0)], Stroke::new(2.0, BG.gamma_multiply(0.8)));
                     }
-                    let hit_now = on_head && !dead;
-                    let glow = if hit_now { 1.0 } else { 0.35 };
-                    p.rect_filled(r.expand(2.0), CornerRadius::same(3), c.gamma_multiply(0.18 * glow));
-                    p.rect_filled(r, CornerRadius::same(2), if hit_now { Color32::WHITE } else { c });
-                    p.rect_filled(Rect::from_min_size(r.min, Vec2::new(r.width(), 3.0)), CornerRadius::ZERO, Color32::from_white_alpha(90));
-                } else {
-                    p.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.0, DIM), StrokeKind::Inside);
+                }
+                p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width(), 3.0)), CornerRadius::ZERO, Color32::from_white_alpha(90));
+                if len > 1 && cell_w >= 18.0 {
+                    p.text(bar.left_top() + Vec2::new(4.0, 5.0), Align2::LEFT_TOP, format!("{len}"), FontId::monospace(10.0), BG);
                 }
             }
             // Playhead lijn.
@@ -421,6 +483,7 @@ impl App {
         let kind_color = match s.kind {
             Kind::Drum => CYAN,
             Kind::Riff => MAGENTA,
+            Kind::Rave => GREEN,
             Kind::User => YELLOW,
         };
         let mut chosen = None;
@@ -434,13 +497,14 @@ impl App {
                 .height(420.0)
                 .selected_text(egui::RichText::new(format!("{} {}", s.kind.label(), s.name.to_uppercase())).color(kind_color))
                 .show_ui(ui, |ui| {
-                    for kind in [Kind::Drum, Kind::Riff, Kind::User] {
+                    for kind in [Kind::Drum, Kind::Riff, Kind::Rave, Kind::User] {
                         let mut first = true;
                         for (i, smp) in samples.iter().enumerate().filter(|(_, x)| x.kind == kind) {
                             if first {
                                 ui.label(egui::RichText::new(match kind {
                                     Kind::Drum => "── TR-808 DRUMS ──",
                                     Kind::Riff => "── RIFFS & STABS ──",
+                                    Kind::Rave => "── 90S RAVE SYNTH ──",
                                     Kind::User => "── USER SAMPLES ──",
                                 }).color(GREEN).size(10.0));
                                 first = false;
@@ -454,6 +518,7 @@ impl App {
         }
         if let Some(i) = chosen {
             track.sample = i;
+            track.note_len = samples[i].kind.default_len();
             self.shared.preview.lock().unwrap().push((i, track.volume));
         }
 
@@ -510,7 +575,23 @@ impl App {
         bevel(p, pitch, if presp.hovered() { YELLOW } else { DIM.gamma_multiply(2.0) });
         p.text(pitch.center(), Align2::CENTER_CENTER, format!("{:+}", track.pitch.round() as i32), FontId::monospace(12.0), if track.pitch.round() == 0.0 { TEXT } else { YELLOW });
 
-        let x_rect = Rect::from_min_size(Pos2::new(pitch.right() + 4.0, rect.center().y - 11.0), Vec2::new(20.0, 22.0));
+        // Lengte van nieuwe noten in blokjes: klik = langer, rechtsklik = korter.
+        let len_rect = Rect::from_min_size(Pos2::new(pitch.right() + 4.0, rect.center().y - 11.0), Vec2::new(34.0, 22.0));
+        let lresp = ui.interact(len_rect, ui.id().with(("len", ti)), Sense::click()).on_hover_text("lengte van nieuwe noten in blokjes (klik / rechtsklik)");
+        const LENS: [u8; 5] = [1, 2, 4, 8, 16];
+        let li = LENS.iter().position(|&l| l >= track.note_len).unwrap_or(0);
+        if lresp.clicked() {
+            track.note_len = LENS[(li + 1) % LENS.len()];
+        }
+        if lresp.secondary_clicked() {
+            track.note_len = LENS[(li + LENS.len() - 1) % LENS.len()];
+        }
+        let p = ui.painter();
+        p.rect_filled(len_rect, CornerRadius::ZERO, Color32::from_rgb(20, 14, 36));
+        bevel(p, len_rect, if lresp.hovered() { GREEN } else { DIM.gamma_multiply(2.0) });
+        p.text(len_rect.center(), Align2::CENTER_CENTER, format!("L{}", track.note_len), FontId::monospace(12.0), if track.note_len > 1 { GREEN } else { TEXT });
+
+        let x_rect = Rect::from_min_size(Pos2::new(len_rect.right() + 4.0, rect.center().y - 11.0), Vec2::new(20.0, 22.0));
         let xr = ui.interact(x_rect, ui.id().with(("x", ti)), Sense::click()).on_hover_text("track verwijderen");
         ui.painter().text(x_rect.center(), Align2::CENTER_CENTER, "×", FontId::monospace(16.0), if xr.hovered() { MAGENTA } else { DIM.gamma_multiply(3.0) });
         if xr.clicked() {
@@ -535,7 +616,7 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(format!(
-                        "STEP {step:02}/{:02} │ {:.0} BPM │ {} TRK │ {audio} │ [SPC] play [←→] grid [↑↓] bpm [R]nd [C]lr [T]rack [^S]ave │ rechtsklik = accent",
+                        "STEP {step:02}/{:02} │ {:.0} BPM │ {} TRK │ {audio} │ [SPC] play [←→] grid [↑↓] bpm [R]nd [C]lr [T]rack [9] rave [^S]ave │ rechtsklik = accent │ scroll op noot = lengte",
                         self.pat.steps,
                         self.pat.bpm,
                         self.pat.tracks.len()
@@ -597,7 +678,7 @@ impl eframe::App for App {
 
 fn clear_cells(p: &mut Pattern) {
     for t in &mut p.tracks {
-        t.cells.fill(Cell::Off);
+        t.clear();
     }
 }
 
