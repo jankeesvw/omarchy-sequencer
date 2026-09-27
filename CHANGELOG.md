@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- **Clear** is now **New**: it starts a new, empty song with the standard tracks. The song you were on stays in Songs. `C` still clears the current pattern.
+
 ## 1.2.0
 
 - **Open in Sequencer** on [omarchysequencer.com](https://omarchysequencer.com) opens a song straight in the app: Sequencer handles `omarchy-sequencer://` links.

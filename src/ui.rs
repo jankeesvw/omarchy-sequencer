@@ -646,8 +646,8 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if ui.add(button("Clear")).on_hover_text("clear this pattern [C] · undo with Ctrl+Z").clicked() {
-                    self.clear_pattern();
+                if ui.add(button("New")).on_hover_text("start a new, empty song; this one stays in Songs [Ctrl+N]").clicked() {
+                    self.new_song("Untitled", Song::blank(&self.samples));
                 }
                 if ui.add(button("Songs")).on_hover_text("open, create and delete songs [Ctrl+O]").clicked() {
                     self.songs_open = !self.songs_open;

@@ -2,7 +2,7 @@
 
 pkgname=omarchy-sequencer-bin
 _name=omarchy-sequencer
-pkgver=1.2.0
+pkgver=1.2.1
 pkgrel=1
 pkgdesc="A step sequencer for Omarchy: TR-808 drums, riffs, 90s rave sounds, effects per track, free sound packs, recording and sharing"
 arch=('x86_64')
@@ -14,7 +14,7 @@ provides=("$_name")
 conflicts=("$_name")
 options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/$_name-$pkgver-x86_64-linux.tar.gz")
-sha256sums_x86_64=('373a9bbe7ef65376abcdfc24429dc5b9532d1d1434dcf550e29dffba06237de0')
+sha256sums_x86_64=('3e54f9710bac94335e82c945bcb8d755699d3d514f6ad341e67d7aeea39545ec')
 
 package() {
   cd "$_name-$pkgver"
