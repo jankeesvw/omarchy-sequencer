@@ -72,6 +72,9 @@ const CREDITS: &[(&str, &str)] = &[
 
 /// Size of a grid cell; the rows are as tall.
 const CELL: f32 = 30.0;
+/// Pressing record shorter than this keeps it recording; longer is hold-to-record.
+const HOLD_THRESHOLD: Duration = Duration::from_millis(350);
+
 /// How long a freshly drawn note takes to pop in.
 const POP: Duration = Duration::from_millis(280);
 
@@ -118,6 +121,9 @@ pub struct App {
     taps: Vec<Instant>,
     recorder: Recorder,
     rec_track: Option<usize>,
+    /// When the recording started, and whether a short click made it keep going (until the next click).
+    rec_started: Option<Instant>,
+    rec_latched: Option<Instant>,
     export_result: Arc<Mutex<Option<String>>>,
     tab: Option<bool>,
     /// The sound browser: which track it picks for, which list it shows, and the search.
@@ -178,6 +184,8 @@ impl App {
             taps: Vec::new(),
             recorder: Recorder::new(),
             rec_track: None,
+            rec_started: None,
+            rec_latched: None,
             export_result: Arc::new(Mutex::new(None)),
             tab: None,
             sounds_open: None,
@@ -397,6 +405,8 @@ impl App {
         match self.recorder.start() {
             Ok(()) => {
                 self.rec_track = Some(track);
+                self.rec_started = Some(Instant::now());
+                self.rec_latched = None;
                 self.selected = track;
             }
             Err(e) => self.say(format!("cannot record: {e}")),
@@ -405,6 +415,8 @@ impl App {
 
     fn stop_recording(&mut self) {
         let Some(track) = self.rec_track.take() else { return };
+        self.rec_started = None;
+        self.rec_latched = None;
         let (raw, rate) = self.recorder.stop();
         match samples::save_recording(&raw, rate) {
             Ok(sample) => {
@@ -456,8 +468,9 @@ impl App {
 
     fn keys(&mut self, ctx: &egui::Context) {
         let wants_text = ctx.egui_wants_keyboard_input();
-        let v_down = !wants_text && ctx.input(|i| i.key_down(egui::Key::V) && !i.modifiers.ctrl);
-        if v_down && !self.recorder.recording() {
+        // Starts on the press itself, so the tap that stops a recording doesn't start the next one.
+        let v_pressed = !wants_text && ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.ctrl);
+        if v_pressed && !self.recorder.recording() {
             self.start_recording(self.selected);
         }
         if wants_text {
@@ -1039,10 +1052,13 @@ impl App {
             t.solo = !t.solo;
         }
         let rec = next(22.0);
-        let rec_resp = ui.interact(rec, ui.id().with(("rec", ti)), Sense::click_and_drag()).on_hover_text("hold to record from your microphone [V]");
+        let rec_resp = ui.interact(rec, ui.id().with(("rec", ti)), Sense::click_and_drag()).on_hover_text("click to record, click again to stop · or hold and let go [V]");
         let recording_here = self.rec_track == Some(ti);
         if rec_resp.is_pointer_button_down_on() && !self.recorder.recording() {
             self.start_recording(ti);
+        }
+        if recording_here && rec_resp.clicked() && self.rec_latched.is_some_and(|t| t.elapsed() > Duration::from_millis(150)) {
+            self.stop_recording();
         }
         {
             let p = ui.painter();
@@ -1345,6 +1361,56 @@ impl App {
         }
         self.glints.retain(|g| now.duration_since(g.2).as_secs_f32() < 0.4);
         self.pops.retain(|p| now.duration_since(p.3) < POP);
+    }
+
+    /// While recording: a panel in the bottom right with the live waveform, the time and a stop button.
+    fn recording_panel(&mut self, ctx: &egui::Context) {
+        if !self.recorder.recording() {
+            return;
+        }
+        let th = self.theme.clone();
+        let mut stop = false;
+        egui::Area::new(egui::Id::new("recording_panel"))
+            .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-14.0, -42.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new().fill(th.bg_dark).stroke(Stroke::new(1.5, th.red)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                    ui.set_width(340.0);
+                    ui.horizontal(|ui| {
+                        let blink = (self.started.elapsed().as_secs_f32() * 2.0).fract() < 0.6;
+                        ui.label(egui::RichText::new(if blink { "●" } else { " " }).color(th.red).size(14.0));
+                        let secs = self.recorder.length();
+                        ui.label(egui::RichText::new(format!("REC  track {}  {:>2}:{:04.1}", self.rec_track.map_or(0, |t| t + 1), (secs / 60.0) as u32, secs % 60.0)).color(th.fg_bright).size(12.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let label = if self.rec_latched.is_some() { "■ Stop" } else { "let go to stop" };
+                            let b = egui::Button::new(egui::RichText::new(label).color(th.on(th.red))).fill(th.red);
+                            if ui.add_enabled(self.rec_latched.is_some(), b).clicked() {
+                                stop = true;
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                    // The last three seconds, as min/max bars scrolling from right to left.
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(340.0, 70.0), Sense::hover());
+                    let p = ui.painter();
+                    p.rect_filled(rect, CornerRadius::ZERO, th.bg_darker);
+                    p.line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0, th.bg_light));
+                    let seconds = 3.0;
+                    let data = self.recorder.tail(seconds);
+                    let columns = 170usize;
+                    let per = ((self.recorder.rate() as f32 * seconds) as usize / columns).max(1);
+                    let offset = columns.saturating_sub(data.len() / per);
+                    for (c, chunk) in data.chunks(per).enumerate() {
+                        let (lo, hi) = chunk.iter().fold((0.0f32, 0.0f32), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+                        let x = rect.left() + (offset + c) as f32 * rect.width() / columns as f32;
+                        let y = |v: f32| rect.center().y - (v * 2.5).clamp(-1.0, 1.0) * rect.height() * 0.48;
+                        p.line_segment([Pos2::new(x, y(hi)), Pos2::new(x, y(lo).max(y(hi) + 1.0))], Stroke::new(1.5, th.red));
+                    }
+                });
+            });
+        if stop {
+            self.stop_recording();
+        }
     }
 
     fn start_install(&mut self, id: &str) {
@@ -1758,7 +1824,7 @@ impl App {
             Output::Silent => "no audio".into(),
         };
         let msg = if self.recorder.recording() {
-            format!("● recording on track {}…  release to stop", self.rec_track.map_or(0, |t| t + 1))
+            format!("● recording on track {}", self.rec_track.map_or(0, |t| t + 1))
         } else {
             match &self.flash {
                 Some((m, at)) if at.elapsed() < Duration::from_secs(4) => m.clone(),
@@ -1798,10 +1864,24 @@ impl eframe::App for App {
         }
         self.keys(&ctx);
 
-        // Push-to-talk: releasing the button or V stops the recording.
+        // Hold to record until you let go; a short click (or tap of V) keeps it going until the next one.
         if self.recorder.recording() {
-            let held = ctx.input(|i| i.pointer.primary_down() || i.key_down(egui::Key::V));
-            if !held {
+            match self.rec_latched {
+                None => {
+                    let held = ctx.input(|i| i.pointer.primary_down() || i.key_down(egui::Key::V));
+                    if !held {
+                        let short = self.rec_started.is_some_and(|t| t.elapsed() < HOLD_THRESHOLD);
+                        if short { self.rec_latched = Some(Instant::now()) } else { self.stop_recording() }
+                    }
+                }
+                Some(since) => {
+                    let again = ctx.input(|i| i.key_pressed(egui::Key::V) || i.key_pressed(egui::Key::Escape));
+                    if again && since.elapsed() > Duration::from_millis(150) {
+                        self.stop_recording();
+                    }
+                }
+            }
+            if self.recorder.recording() && self.recorder.length() >= audio::MAX_RECORDING_SECONDS as f32 {
                 self.stop_recording();
             }
         }
@@ -1836,6 +1916,7 @@ impl eframe::App for App {
             });
 
         self.effects(&ctx);
+        self.recording_panel(&ctx);
         self.fx_window(&ctx);
         self.songs_window(&ctx);
         self.about_window(&ctx);

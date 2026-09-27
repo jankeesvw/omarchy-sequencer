@@ -7,6 +7,8 @@ use crate::pattern::{Cell, FilterKind, Fx, MAX_TRACKS, Song};
 use crate::samples::Sample;
 
 pub const SCOPE_LEN: usize = 1024;
+/// Longest recording; it stops growing after this.
+pub const MAX_RECORDING_SECONDS: usize = 60;
 const FADE_FRAMES: f32 = 96.0;
 const MAX_VOICES: usize = 64;
 
@@ -669,7 +671,7 @@ impl Recorder {
         f32: cpal::FromSample<T>,
     {
         let channels = config.channels as usize;
-        let max = config.sample_rate as usize * 20;
+        let max = config.sample_rate as usize * MAX_RECORDING_SECONDS;
         let buf = self.buf.clone();
         let level = self.level.clone();
         device.build_input_stream(
@@ -680,7 +682,6 @@ impl Recorder {
                 for frame in data.chunks(channels) {
                     let s = frame.iter().map(|x| <f32 as cpal::FromSample<T>>::from_sample_(*x)).sum::<f32>() / channels as f32;
                     peak = peak.max(s.abs());
-                    // At most 20 seconds.
                     if b.len() < max {
                         b.push(s);
                     }
@@ -690,6 +691,22 @@ impl Recorder {
             |e| eprintln!("omarchy-sequencer: microphone error: {e}"),
             None,
         )
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// The last `seconds` of the recording, for the live waveform.
+    pub fn tail(&self, seconds: f32) -> Vec<f32> {
+        let buf = self.buf.lock().unwrap();
+        let n = ((self.rate as f32 * seconds) as usize).min(buf.len());
+        buf[buf.len() - n..].to_vec()
+    }
+
+    /// How long it has been recording.
+    pub fn length(&self) -> f32 {
+        self.buf.lock().unwrap().len() as f32 / self.rate as f32
     }
 
     /// Stops recording and returns the raw audio.

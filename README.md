@@ -67,7 +67,7 @@ Click a track's sound to open the browser: a TR-808 kit, riffs, real 90s rave so
 
 ### Records your own sounds
 
-Hold the red button on a track, or hold **V**, and make a sound. When you let go it is on the track, ready to play.
+Click the red button on a track, or tap **V**, and make a sound; click again to stop. Or hold it and let go when you are done. The recording goes straight onto the track, ready to play.
 
 ![Recording a "check it" onto a track and playing it in the groove](media/anim-record.webp)
 
@@ -87,10 +87,6 @@ It takes the colours and font of your theme, light ones included, and follows al
 
 ▶ [With sound](media/themes.mp4)
 
-### Has an about box like software used to
-
-![The about box, with an ASCII logo and rolling credits](media/about.webp)
-
 ## Keys
 
 | Key | What it does |
@@ -101,7 +97,7 @@ It takes the colours and font of your theme, light ones included, and follows al
 | `F1` to `F8` | Pattern A to H, with `Shift` to copy the current pattern there |
 | `1` to `9` | Mute track 1 to 9 |
 | `Tab` | Select the next track |
-| `V` (hold) | Record into the selected track |
+| `V` | Record into the selected track: tap to start and stop, or hold |
 | `R`, `C`, `N` | Random pattern, clear the pattern, add a track |
 | `Ctrl+Z`, `Ctrl+Shift+Z` | Undo, redo |
 | `Ctrl+N`, `Ctrl+O` | New song, open the songs window |

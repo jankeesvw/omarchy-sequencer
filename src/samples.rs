@@ -33,8 +33,9 @@ pub enum Kind {
     Pack,
 }
 
-/// Longest sample kept in memory; packs sometimes contain long soundscapes.
+/// Longest sample kept in memory: packs sometimes contain long soundscapes, your own recordings can be longer.
 const MAX_SECONDS: u32 = 12;
+const MAX_USER_SECONDS: u32 = 60;
 
 
 macro_rules! embed {
@@ -225,7 +226,7 @@ fn decode<R: std::io::Read>(name: &str, kind: Kind, pack: &str, reader: R) -> Op
     };
     let data: Vec<f32> = interleaved
         .chunks(channels)
-        .take((spec.sample_rate * MAX_SECONDS) as usize)
+        .take((spec.sample_rate * if pack == "user" { MAX_USER_SECONDS } else { MAX_SECONDS }) as usize)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect();
     if data.len() < 2 {
