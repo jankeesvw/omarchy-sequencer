@@ -1,6 +1,6 @@
 # Sequencer
 
-A step sequencer for [Omarchy](https://omarchy.org). Click a beat together, stretch notes across as many steps as you like, give every track its own effects, and record your own sounds. It comes with a TR-808 kit, riffs, 90s rave sounds and vocals, and free sound packs are one click away.
+A step sequencer for [Omarchy](https://omarchy.org). Click a beat together, stretch notes across as many steps as you like, give every track its own effects, and record your own sounds. It comes with a TR-808 kit, riffs, 90s rave sounds and vocals, and free sound packs are one click away. Share what you make on [omarchysequencer.com](https://omarchysequencer.com), where others listen, vote, and open it in the app.
 
 ![Sequencer playing Late Night: the playhead runs across the grid and every note flashes as it plays](media/hero.webp)
 
@@ -71,7 +71,7 @@ Songs save themselves while you work, in `~/Music/Sequencer`. **Songs** opens, s
 
 ### Shares your songs
 
-**Share** puts a song on [omarchysequencer.com](https://omarchysequencer.com), where others can listen to it, vote for it, and open it in the app. `omarchy-sequencer --open <song url>` opens a shared song, and installs any sound packs it needs.
+**Share** puts a song on [omarchysequencer.com](https://omarchysequencer.com), where others can listen to it, vote for it, and open it in the app. The site plays it with the app's own engine, and your own recordings go along with it. `omarchy-sequencer --open <song url>` opens a shared song, and installs any sound packs it needs.
 
 ### Wears your Omarchy theme
 

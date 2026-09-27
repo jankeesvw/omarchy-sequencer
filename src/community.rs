@@ -20,8 +20,8 @@ pub struct Share {
     pub description: String,
 }
 
-/// Uploads the song file with the sounds the site doesn't have (your own and those from packs), and
-/// returns the page it got. The site plays the song itself, with the same engine as the app.
+/// Uploads the song file with your own sounds, as Opus (WAV when ffmpeg is missing), and returns the
+/// page it got. Built-in and pack sounds the site has itself; it plays the song with the app's engine.
 pub fn share(samples: Vec<Arc<Sample>>, song: &Song, json: String, share: Share, progress: &Arc<Mutex<String>>) -> Result<String, String> {
     let say = |s: &str| *progress.lock().unwrap() = s.to_owned();
     let dir = std::env::temp_dir().join(format!("{}-share-{}", crate::APP, std::process::id()));
@@ -31,21 +31,39 @@ pub fn share(samples: Vec<Arc<Sample>>, song: &Song, json: String, share: Share,
         say("preparing…");
         let file = dir.join("song.json");
         std::fs::write(&file, json).map_err(|e| e.to_string())?;
-        let mut sounds = Vec::new();
+        let mut sounds: Vec<(String, PathBuf)> = Vec::new();
         for track in &song.tracks {
             let sample = &samples[track.sample];
-            if sample.pack == "classic" || sounds.iter().any(|(id, _)| id == &sample.id) {
+            if sample.pack != "user" || sounds.iter().any(|(id, _)| id == &sample.id) {
                 continue;
             }
             let wav = dir.join(format!("sound-{}.wav", sounds.len()));
             std::fs::write(&wav, crate::sound::to_wav(sample)).map_err(|e| e.to_string())?;
-            sounds.push((sample.id.clone(), wav));
+            sounds.push((sample.id.clone(), to_opus(&wav).unwrap_or(wav)));
         }
         say("uploading…");
         upload(&share, &file, &sounds)
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+/// About a tenth of the WAV, and plenty for a recording.
+fn to_opus(wav: &Path) -> Option<PathBuf> {
+    let opus = wav.with_extension("opus");
+    let ok = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i"])
+        .arg(wav)
+        .args(["-c:a", "libopus", "-b:a", "64k"])
+        .arg(&opus)
+        .status()
+        .is_ok_and(|s| s.success());
+    ok.then_some(opus).filter(|p| p.exists())
+}
+
+/// Back to a WAV, which is what the app reads.
+fn to_wav(opus: &Path, wav: &Path) -> bool {
+    Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).arg(opus).args(["-c:a", "pcm_s16le"]).arg(wav).status().is_ok_and(|s| s.success())
 }
 
 fn upload(share: &Share, file: &Path, sounds: &[(String, PathBuf)]) -> Result<String, String> {
@@ -56,7 +74,8 @@ fn upload(share: &Share, file: &Path, sounds: &[(String, PathBuf)]) -> Result<St
         .args(["--form-string", &format!("description={}", share.description)])
         .arg("-F").arg(format!("song=@{};type=application/json", file.display()));
     for (id, wav) in sounds {
-        curl.args(["--form-string", &format!("sound_names[]={id}")]).arg("-F").arg(format!("sounds[]=@{};type=audio/wav", wav.display()));
+        let kind = if wav.extension().is_some_and(|e| e == "opus") { "audio/ogg" } else { "audio/wav" };
+        curl.args(["--form-string", &format!("sound_names[]={id}")]).arg("-F").arg(format!("sounds[]=@{};type={kind}", wav.display()));
     }
     let out = curl.arg(format!("{}/api/songs", base_url())).output().map_err(|e| format!("curl: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
@@ -90,8 +109,12 @@ pub fn fetch_own_sounds(text: &str) -> String {
         let tmp = dir.join(format!(".{name}.download"));
         let _ = std::fs::create_dir_all(&dir);
         let ok = Command::new("curl").args(["-fsSL", "--max-time", "60", "-o"]).arg(&tmp).arg(&url).status().is_ok_and(|s| s.success());
-        let bytes = std::fs::read(&tmp).ok().filter(|_| ok);
+        // Shared recordings come as Opus: the app reads WAV.
+        let wav = dir.join(format!(".{name}.download.wav"));
+        let ok = ok && (!url.ends_with(".opus") || to_wav(&tmp, &wav));
+        let bytes = std::fs::read(if url.ends_with(".opus") { &wav } else { &tmp }).ok().filter(|_| ok);
         let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&wav);
         let Some(bytes) = bytes else {
             eprintln!("Could not download the sound {name}");
             continue;
@@ -164,7 +187,7 @@ mod tests {
         let (text, name) = super::fetch(&url).expect("fetched");
         assert_eq!(name, "Own sound test");
         let file: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert!(file["sounds"]["rec_test"].as_str().is_some_and(|u| u.ends_with(".wav")), "{}", file["sounds"]);
+        assert!(file["sounds"]["rec_test"].as_str().is_some_and(|u| u.ends_with(".opus") || u.ends_with(".wav")), "{}", file["sounds"]);
     }
 
     #[test]

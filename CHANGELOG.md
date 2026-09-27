@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Sharing sends your own recordings as Opus, about a tenth of the size, and no longer sends pack sounds: the site gets the packs itself.
+
 ## 1.1.0
 
 - **Share** in the toolbar puts your song on [omarchysequencer.com](https://omarchysequencer.com), where others listen to it, vote for it and open it in the app. The site plays songs with the app's own engine, compiled to WebAssembly (`player/`), with every pattern.

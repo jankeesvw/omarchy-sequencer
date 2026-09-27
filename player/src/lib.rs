@@ -59,6 +59,20 @@ pub unsafe extern "C" fn add_sound(name: *const u8, name_len: usize, wav: *const
     }
 }
 
+/// Adds a sound the browser decoded itself (your own recordings come as Opus): mono samples at `rate`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn add_pcm(name: *const u8, name_len: usize, data: *const f32, len: usize, rate: u32) -> i32 {
+    let name = String::from_utf8_lossy(unsafe { bytes(name, name_len) }).into_owned();
+    // As long as the app lets your own recordings be.
+    let data: Vec<f32> = unsafe { std::slice::from_raw_parts(data, len) }.iter().take(rate as usize * 60).copied().collect();
+    if data.len() < 2 || rate == 0 {
+        return 0;
+    }
+    let sample = Sample { name: name.clone(), pack: "user".into(), id: name.clone(), kind: Kind::User, data, rate };
+    SOUNDS.with_borrow_mut(|s| s.push((name, Arc::new(sample))));
+    1
+}
+
 /// Renders the song `loops` times at `rate`, as interleaved stereo; returns the number of frames,
 /// or 0 when the song file can't be read. Tracks whose sound is missing stay silent.
 #[unsafe(no_mangle)]
