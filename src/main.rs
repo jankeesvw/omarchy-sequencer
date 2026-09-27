@@ -65,6 +65,16 @@ fn main() -> eframe::Result {
     if let Some(url) = args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1)) {
         open_shared(url);
     }
+    // "Open in Sequencer" on the site: omarchy-sequencer://omarchysequencer.com/songs/12-late-night
+    if let Some(link) = args.iter().find(|a| a.starts_with(community::SCHEME)) {
+        match community::url_from_link(link) {
+            Some(url) => open_shared(&url),
+            None => {
+                let _ = std::process::Command::new("notify-send").args(["Sequencer", "That link is not a song on the community site"]).status();
+                std::process::exit(1);
+            }
+        }
+    }
     let samples = samples::load_all();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!("Usage: {APP} [--play] [--preset demo|rave|late-night] [--open <url>] [--about] [--install-pack <pack>]");

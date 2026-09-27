@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
+- **Open in Sequencer** on [omarchysequencer.com](https://omarchysequencer.com) opens a song straight in the app: Sequencer handles `omarchy-sequencer://` links.
 - Sharing sends your own recordings as Opus, about a tenth of the size, and no longer sends pack sounds: the site gets the packs itself.
+- Shares are signed, so the site only takes songs from the app. Sequencer 1.1 can no longer share.
 
 ## 1.1.0
 

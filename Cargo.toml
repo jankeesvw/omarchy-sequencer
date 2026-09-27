@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-sequencer"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 description = "A step sequencer for Omarchy, with TR-808 drums, riffs, 90s rave samples and your own recordings"
 license = "MIT"
@@ -15,13 +15,15 @@ required-features = ["app"]
 [features]
 default = ["app"]
 # Everything around the engine: window, audio device, files. The web player builds without it.
-app = ["dep:cpal", "dep:dirs", "dep:eframe", "dep:fastrand"]
+app = ["dep:cpal", "dep:dirs", "dep:eframe", "dep:fastrand", "dep:hmac", "dep:sha2"]
 
 [dependencies]
 cpal = { version = "0.18.2", optional = true }
 dirs = { version = "7.0.0", optional = true }
 eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"], optional = true }
 fastrand = { version = "2.5.0", optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
 hound = "3.5.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

@@ -14,6 +14,33 @@ pub fn base_url() -> String {
     std::env::var("OMARCHY_SEQUENCER_COMMUNITY").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| DEFAULT_URL.into()).trim_end_matches('/').to_owned()
 }
 
+/// Links on the site that open a song in the app (see packaging/omarchy-sequencer.desktop).
+pub const SCHEME: &str = "omarchy-sequencer://";
+
+/// The song address in an "Open in Sequencer" link; only songs on the community site itself.
+pub fn url_from_link(link: &str) -> Option<String> {
+    let rest = link.strip_prefix(SCHEME)?.trim_end_matches('/');
+    let base = base_url();
+    let host = base.split_once("://").map_or(base.as_str(), |(_, h)| h);
+    let path = rest.strip_prefix(host)?;
+    let slug = path.strip_prefix("/songs/")?;
+    let ok = !slug.is_empty() && slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+    ok.then(|| format!("{base}{path}"))
+}
+
+/// A signature over the song file, so the upload comes from the app and not from any script that
+/// finds the address. The key is in the source, so this keeps out drive-by posts, not a determined person.
+const SHARE_KEY: &[u8] = b"sequencer-share-v1:6f1c0a2e9d4b47c8a1e35b7d90c2f864";
+
+fn signature(time: u64, json: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::{Digest, Sha256};
+    let hash: String = Sha256::digest(json).iter().map(|b| format!("{b:02x}")).collect();
+    let mut mac = Hmac::<Sha256>::new_from_slice(SHARE_KEY).expect("any key length works");
+    mac.update(format!("{time}\n{hash}").as_bytes());
+    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub struct Share {
     pub title: String,
     pub artist: String,
@@ -67,8 +94,13 @@ fn to_wav(opus: &Path, wav: &Path) -> bool {
 }
 
 fn upload(share: &Share, file: &Path, sounds: &[(String, PathBuf)]) -> Result<String, String> {
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let json = std::fs::read(file).map_err(|e| e.to_string())?;
     let mut curl = Command::new("curl");
     curl.args(["-sS", "--max-time", "120", "-w", "\n%{http_code}"])
+        .args(["-H", &format!("X-Sequencer-Time: {time}")])
+        .args(["-H", &format!("X-Sequencer-Signature: {}", signature(time, &json))])
+        .args(["-A", &format!("{}/{}", crate::APP, env!("CARGO_PKG_VERSION"))])
         .args(["--form-string", &format!("title={}", share.title)])
         .args(["--form-string", &format!("artist={}", share.artist)])
         .args(["--form-string", &format!("description={}", share.description)])
@@ -167,6 +199,21 @@ pub fn fetch(url: &str) -> Result<(String, String), String> {
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn opens_links_to_songs_on_the_site_only() {
+        let base = super::base_url();
+        let host = base.split_once("://").unwrap().1;
+        assert_eq!(super::url_from_link(&format!("omarchy-sequencer://{host}/songs/12-late-night")), Some(format!("{base}/songs/12-late-night")));
+        assert_eq!(super::url_from_link("omarchy-sequencer://evil.example/songs/1"), None);
+        assert_eq!(super::url_from_link(&format!("omarchy-sequencer://{host}/songs/1?x=../../")), None);
+    }
+
+    #[test]
+    fn signs_like_the_site_checks() {
+        // The same numbers are in the site's test (test/integration/sharing_test.rb).
+        assert_eq!(super::signature(1_700_000_000, b"{}"), "5773f81ffc2cc7688efbe64678671157e67279eec8356a40c214c79ace7c953a");
+    }
 
     use crate::sound::{Kind, Sample};
 

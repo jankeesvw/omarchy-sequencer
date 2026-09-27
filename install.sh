@@ -27,5 +27,7 @@ install -Dm755 "$binary" ~/.local/bin/$name
 install -Dm644 "$data/$name.desktop" ~/.local/share/applications/$name.desktop
 install -Dm644 "$data/$name.svg" ~/.local/share/icons/hicolor/scalable/apps/$name.svg
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
+# "Open in Sequencer" on omarchysequencer.com.
+xdg-mime default $name.desktop x-scheme-handler/$name 2>/dev/null || true
 
 echo "Sequencer installed. Open it from the launcher (Super + Space), or run '$name'."

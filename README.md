@@ -71,7 +71,7 @@ Songs save themselves while you work, in `~/Music/Sequencer`. **Songs** opens, s
 
 ### Shares your songs
 
-**Share** puts a song on [omarchysequencer.com](https://omarchysequencer.com), where others can listen to it, vote for it, and open it in the app. The site plays it with the app's own engine, and your own recordings go along with it. `omarchy-sequencer --open <song url>` opens a shared song, and installs any sound packs it needs.
+**Share** puts a song on [omarchysequencer.com](https://omarchysequencer.com), where others can listen to it, vote for it, and open it in the app. The site plays it with the app's own engine, and your own recordings go along with it. **Open in Sequencer** on a song's page opens it straight in the app, as does `omarchy-sequencer --open <song url>`; it installs the sound packs and downloads the recordings it needs.
 
 ### Wears your Omarchy theme
 
