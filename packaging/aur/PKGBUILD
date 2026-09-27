@@ -5,7 +5,7 @@ _name=omarchy-sequencer
 pkgver=1.2.1
 pkgrel=1
 pkgdesc="A step sequencer for Omarchy: TR-808 drums, riffs, 90s rave sounds, effects per track, free sound packs, recording and sharing"
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url="https://github.com/jankeesvw/omarchy-sequencer"
 license=('MIT')
 depends=('alsa-lib' 'gcc-libs' 'glibc' 'libglvnd' 'wayland' 'libxkbcommon' 'fontconfig' 'curl' 'libarchive')
@@ -15,6 +15,8 @@ conflicts=("$_name")
 options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/$_name-$pkgver-x86_64-linux.tar.gz")
 sha256sums_x86_64=('3e54f9710bac94335e82c945bcb8d755699d3d514f6ad341e67d7aeea39545ec')
+source_aarch64=("$url/releases/download/v$pkgver/$_name-$pkgver-aarch64-linux.tar.gz")
+sha256sums_aarch64=('SKIP')
 
 package() {
   cd "$_name-$pkgver"
