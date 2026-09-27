@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::pattern::Song;
 use crate::samples::Sample;
 
-const DEFAULT_URL: &str = "https://sequencer.jankeesvw.com";
+const DEFAULT_URL: &str = "https://omarchysequencer.com";
 
 /// Where the community site lives; `OMARCHY_SEQUENCER_COMMUNITY` points it elsewhere (for testing).
 pub fn base_url() -> String {
