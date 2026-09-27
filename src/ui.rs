@@ -660,6 +660,9 @@ impl App {
                 if ui.add(song_button).on_hover_text("song settings: name, tempo, swing and volume").clicked() {
                     self.settings_open = !self.settings_open;
                 }
+                if ui.add(button("Share")).on_hover_text("put this song on omarchysequencer.com").clicked() {
+                    self.open_share();
+                }
                 if ui.add(button("Export")).on_hover_text("the current pattern 4 times to a WAV in ~/Music [Ctrl+E]").clicked() {
                     self.export();
                 }
