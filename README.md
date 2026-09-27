@@ -2,7 +2,7 @@
 
 A step sequencer for [Omarchy](https://omarchy.org). Click a beat together, stretch notes across as many steps as you like, give every track its own effects, and record your own sounds. It comes with a TR-808 kit, riffs, 90s rave sounds and vocals, and free sound packs are one click away.
 
-![Sequencer playing Late Night in Tokyo Night](media/hero.webp)
+![Sequencer playing Late Night: the playhead runs across the grid and every note flashes as it plays](media/hero.webp)
 
 **▶ [Watch the one minute trailer, with sound](media/trailer.mp4)**
 
