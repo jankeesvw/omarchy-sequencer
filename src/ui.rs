@@ -2138,7 +2138,8 @@ fn pack_card(ui: &mut egui::Ui, th: &Theme, card: PackCard, time: f32) -> Option
             }
         };
         p.rect_filled(fill, CornerRadius::ZERO, card.tile);
-        p.text(button.center(), Align2::CENTER_CENTER, progress, FontId::monospace(10.0), th.fg);
+        // Clipped to the button, in case a status line is longer than it.
+        p.with_clip_rect(button).text(button.center(), Align2::CENTER_CENTER, progress, FontId::monospace(10.0), th.fg);
     } else if card.installed {
         let resp = ui.interact(button, ui.id().with(("open", entry.id)), Sense::click());
         let p = ui.painter();

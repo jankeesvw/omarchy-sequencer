@@ -145,7 +145,7 @@ pub fn install(entry: &CatalogEntry, progress: &Arc<Mutex<String>>) -> Result<()
     let result = (|| {
         match &entry.source {
             Source::Archive(item) => {
-                say("reading the file list…".into());
+                say("listing…".into());
                 let meta = fetch_text(&format!("https://archive.org/metadata/{item}"))?;
                 let meta: serde_json::Value = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
                 let files: Vec<String> = meta["files"]
@@ -163,7 +163,7 @@ pub fn install(entry: &CatalogEntry, progress: &Arc<Mutex<String>>) -> Result<()
                 // Eight at a time: archive.org answers every file with a redirect, one by one is slow.
                 let mut done = 0;
                 for chunk in files.chunks(8) {
-                    say(format!("{done}/{} files", files.len()));
+                    say(format!("{done}/{}", files.len()));
                     let jobs: Vec<(String, PathBuf)> = chunk
                         .iter()
                         .map(|name| (format!("https://archive.org/download/{item}/{}", encode(name)), reserve(&tmp, name)))
@@ -171,7 +171,7 @@ pub fn install(entry: &CatalogEntry, progress: &Arc<Mutex<String>>) -> Result<()
                     download_all(&jobs)?;
                     done += chunk.len();
                 }
-                say(format!("{done}/{} files", files.len()));
+                say(format!("{done}/{}", files.len()));
             }
             Source::Zip(url, take) => {
                 say("downloading…".into());
