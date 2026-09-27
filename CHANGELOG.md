@@ -9,7 +9,8 @@ The first release.
 - Effects on every track: pitch, fine tuning, reverse, filter, three band EQ, drive, distortion, bitcrush, sample rate reduction, ring modulator, chop, delay and reverb, with a looping preview.
 - A sound browser with a built-in TR-808 kit, riffs, real 90s rave sounds and vocals, and search across everything.
 - Six free sound packs to download from inside the app, all CC0 or public domain.
-- Recording from the microphone, push-to-talk like Voxtype.
+- Recording from the microphone: click to start and stop, or hold and let go, with a live waveform. Up to 60 seconds.
+- Click effects: notes pop in with sparks, and a preview of the note shows where you hover.
 - Songs saved as files in `~/Music/Sequencer`, with presets, undo and redo, and export to WAV.
 - Follows your Omarchy theme and font, and keeps every theme readable.
 - An about box with an ASCII logo and rolling credits.
