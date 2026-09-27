@@ -22,39 +22,31 @@ Then open **Sequencer** from the launcher (Super + Space) and press **Space**.
 
 The letters A to H are eight patterns. Pick another one while the song plays and it switches at the end of the bar.
 
-![Switching from pattern A to B to C while Late Night plays](media/anim-groove.webp)
-
-▶ [With sound](media/groove.mp4)
+![Late Night on pattern B, with the other patterns lit up above the grid](media/patterns.webp)
 
 ### Lets notes last as long as you want
 
 Click or drag to draw, right-click for an accent. A note can span 1 to 16 steps, so a bass line or a chord holds exactly as long as you draw it. Scroll over a note to change its length.
 
-![Drawing a beat into an empty pattern](media/anim-draw.webp)
-
-▶ [With sound](media/draw.mp4)
+![A beat drawn into an empty pattern: kick, clap, hats, a shaker line, a bass and a long Rhodes chord](media/draw.webp)
 
 ### Gives every track its own effects
 
 **FX** on a track opens a filter, EQ, drive, distortion, bitcrush, a ring modulator, a chop in time with the song, delay, reverb, pitch and reverse. **Loop** keeps playing the sound so you hear every change.
 
-![Sweeping the filter on the Rhodes chord, then adding drive and reverb](media/anim-fx.webp)
-
-▶ [With sound](media/fx.mp4)
+![The effects of the Rhodes chord: filter, EQ, drive, chop, delay and reverb](media/fx.webp)
 
 ### Has a sound for everything
 
 Click a track's sound to open the browser: a TR-808 kit, riffs, real 90s rave sounds like hoovers, an M1 organ and a JX-3P stab, and vocals. Search finds a sound in everything you have.
 
-![Swapping the kick for a chest thump, then for a cajon kick found by searching](media/anim-sounds.webp)
-
-▶ [With sound](media/sounds.mp4)
+![Searching for a cajon across the built-in sounds and the packs](media/sounds.webp)
 
 ### Downloads free sound packs
 
 **Get more packs** downloads free sample libraries with one click. They are all CC0 or public domain, so what you make with them is yours.
 
-![Getting the Lo-fi Kits pack](media/anim-store.webp)
+![The sound packs you can download](media/packs.webp)
 
 | Pack | What is in it | Size |
 |---|---|---|
@@ -69,9 +61,7 @@ Click a track's sound to open the browser: a TR-808 kit, riffs, real 90s rave so
 
 Click the red button on a track, or tap **V**, and make a sound; click again to stop. Or hold it and let go when you are done. The recording goes straight onto the track, ready to play.
 
-![Recording a "check it" onto a track and playing it in the groove](media/anim-record.webp)
-
-▶ [With sound](media/record.mp4)
+![Recording onto a track, with the live waveform in the corner](media/record.webp)
 
 ### Keeps your songs
 
@@ -83,9 +73,7 @@ Songs save themselves while you work, in `~/Music/Sequencer`. **Songs** opens, s
 
 It takes the colours and font of your theme, light ones included, and follows along when you switch.
 
-![Switching themes while Arcade plays](media/anim-themes.webp)
-
-▶ [With sound](media/themes.mp4)
+![Sequencer in Tokyo Night, Gruvbox, Catppuccin Latte, Osaka Jade, Rose Pine and Kanagawa](media/themes.webp)
 
 ## Keys
 
