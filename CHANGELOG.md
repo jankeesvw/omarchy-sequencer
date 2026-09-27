@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Share songs to [omarchysequencer.com](https://omarchysequencer.com) with the Share button, where others listen, vote and open them. The site plays them with the app's own engine, compiled to WebAssembly (`player/`).
+- Your own sounds go along with a shared song, and `--open` downloads them.
+
 ## 1.0.0
 
 The first release.

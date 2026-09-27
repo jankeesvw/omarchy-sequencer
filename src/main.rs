@@ -1,11 +1,12 @@
 mod audio;
 mod community;
 mod packs;
-mod pattern;
 mod samples;
 mod songs;
 mod theme;
 mod ui;
+
+use omarchy_sequencer::{engine, pattern, sound};
 
 use std::sync::Arc;
 
@@ -48,6 +49,7 @@ fn open_shared(url: &str) {
             None => eprintln!("This song uses the pack {} ({}), which this version doesn't know.", pack.name, pack.url),
         }
     }
+    let text = community::fetch_own_sounds(&text);
     match songs::import(&text, &name) {
         Ok(name) => println!("Opening \"{name}\""),
         Err(e) => {

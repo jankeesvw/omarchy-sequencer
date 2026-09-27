@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
-use crate::samples::Sample;
+use crate::sound::Sample;
 
 pub const MAX_STEPS: usize = 64;
 pub const MAX_TRACKS: usize = 16;

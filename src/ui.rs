@@ -1739,7 +1739,7 @@ impl App {
     fn start_share(&mut self) {
         songs::set_artist(&self.share_artist);
         let _ = songs::write(&self.song_name, &self.song, &self.samples);
-        let progress = Arc::new(Mutex::new("recording…".to_string()));
+        let progress = Arc::new(Mutex::new("preparing…".to_string()));
         *self.share_state.lock().unwrap() = ShareState::Busy(progress.clone());
         let (samples, song, json) = (self.samples.clone(), self.song.clone(), songs::to_json(&self.song, &self.samples));
         let share = community::Share { title: self.share_title.trim().to_owned(), artist: self.share_artist.trim().to_owned(), description: self.share_description.trim().to_owned() };
@@ -1828,7 +1828,7 @@ impl App {
                     ui.label(egui::RichText::new(format!("Uses {}. Whoever opens it gets them installed.", used.join(", "))).color(th.fg_dim).size(11.0));
                 }
                 if songs::uses_own_sounds(&self.song, &self.samples) {
-                    ui.label(egui::RichText::new("Uses your own recordings: others hear them in the recording, but they can't open them.").color(th.yellow).size(11.0));
+                    ui.label(egui::RichText::new("Your own sounds go along, so others can hear and open the song with them.").color(th.fg_dim).size(11.0));
                 }
                 if let ShareState::Failed(e) = &state {
                     ui.label(egui::RichText::new(format!("Sharing failed: {e}")).color(th.red).size(12.0));

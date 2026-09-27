@@ -7,11 +7,21 @@ license = "MIT"
 repository = "https://github.com/jankeesvw/omarchy-sequencer"
 readme = "README.md"
 
+[[bin]]
+name = "omarchy-sequencer"
+path = "src/main.rs"
+required-features = ["app"]
+
+[features]
+default = ["app"]
+# Everything around the engine: window, audio device, files. The web player builds without it.
+app = ["dep:cpal", "dep:dirs", "dep:eframe", "dep:fastrand"]
+
 [dependencies]
-cpal = "0.18.2"
-dirs = "7.0.0"
-eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-fastrand = "2.5.0"
+cpal = { version = "0.18.2", optional = true }
+dirs = { version = "7.0.0", optional = true }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"], optional = true }
+fastrand = { version = "2.5.0", optional = true }
 hound = "3.5.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
