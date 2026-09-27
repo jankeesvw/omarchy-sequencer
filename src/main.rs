@@ -1,4 +1,5 @@
 mod audio;
+mod community;
 mod packs;
 mod pattern;
 mod samples;
@@ -23,14 +24,51 @@ fn move_old_folders() {
     }
 }
 
+/// `--open <url>`: downloads a shared song, installs the packs it needs, and makes it the song that opens.
+fn open_shared(url: &str) {
+    let (text, name) = match community::fetch(url) {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    for pack in songs::packs_in(&text) {
+        if packs::installed().iter().any(|(info, _)| info.id == pack.id) {
+            continue;
+        }
+        match packs::CATALOG.iter().find(|e| e.id == pack.id) {
+            Some(entry) => {
+                println!("Installing {}, used in this song…", entry.name);
+                let progress = Arc::new(std::sync::Mutex::new(String::new()));
+                if let Err(e) = packs::install(entry, &progress) {
+                    eprintln!("Installing {} failed: {e}", entry.name);
+                }
+            }
+            None => eprintln!("This song uses the pack {} ({}), which this version doesn't know.", pack.name, pack.url),
+        }
+    }
+    match songs::import(&text, &name) {
+        Ok(name) => println!("Opening \"{name}\""),
+        Err(e) => {
+            eprintln!("Saving the song failed: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() -> eframe::Result {
     move_old_folders();
-    let samples = samples::load_all();
     let args: Vec<String> = std::env::args().collect();
+    if let Some(url) = args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1)) {
+        open_shared(url);
+    }
+    let samples = samples::load_all();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("Usage: {APP} [--play] [--preset demo|rave|late-night] [--about] [--install-pack <pack>]");
+        println!("Usage: {APP} [--play] [--preset demo|rave|late-night] [--open <url>] [--about] [--install-pack <pack>]");
         println!("  --play           start playing right away");
         println!("  --preset <name>  start a new song from a preset");
+        println!("  --open <url>     open a song from the community site, with the packs it needs");
         println!("  --install-pack <pack>  download a sound pack (run without a name to list them)");
         return Ok(());
     }

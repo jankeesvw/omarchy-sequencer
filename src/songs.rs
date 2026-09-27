@@ -16,12 +16,86 @@ const EXT: &str = "json";
 struct SongFile {
     song: Song,
     names: Vec<String>,
+    /// The sound packs the song uses, so whoever opens it can get them.
+    #[serde(default)]
+    packs: Vec<PackRef>,
 }
 
-/// Which song was open last, so the next start continues there.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PackRef {
+    pub id: String,
+    pub name: String,
+    pub author: String,
+    pub license: String,
+    pub url: String,
+}
+
+/// The packs `song` uses, from the catalog.
+fn packs_of(song: &Song, samples: &[Arc<Sample>]) -> Vec<PackRef> {
+    let mut ids: Vec<&str> = song.tracks.iter().map(|t| samples[t.sample].pack.as_str()).collect();
+    ids.sort();
+    ids.dedup();
+    ids.into_iter()
+        .filter_map(|id| crate::packs::CATALOG.iter().find(|e| e.id == id))
+        .map(|e| PackRef { id: e.id.into(), name: e.name.into(), author: e.author.into(), license: e.license.into(), url: e.url.into() })
+        .collect()
+}
+
+/// The song file as it is saved and shared.
+pub fn to_json(song: &Song, samples: &[Arc<Sample>]) -> String {
+    let file = SongFile { song: song.clone(), names: song.tracks.iter().map(|t| samples[t.sample].id.clone()).collect(), packs: packs_of(song, samples) };
+    serde_json::to_string(&file).unwrap_or_default()
+}
+
+/// Whether the song uses your own recordings or samples, which others won't have.
+pub fn uses_own_sounds(song: &Song, samples: &[Arc<Sample>]) -> bool {
+    song.tracks.iter().any(|t| samples[t.sample].pack == "user")
+}
+
+/// Which song was open last, so the next start continues there, and the name you share under.
 #[derive(Serialize, Deserialize, Default)]
 struct State {
     current: Option<String>,
+    #[serde(default)]
+    artist: Option<String>,
+}
+
+fn load_state() -> State {
+    config_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_state(state: &State) {
+    if let Some(dir) = config_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("state.json"), serde_json::to_string(state).unwrap_or_default());
+    }
+}
+
+pub fn artist() -> String {
+    load_state().artist.unwrap_or_default()
+}
+
+pub fn set_artist(name: &str) {
+    let mut state = load_state();
+    state.artist = Some(name.trim().to_owned()).filter(|n| !n.is_empty());
+    save_state(&state);
+}
+
+/// Saves a song file someone shared, as it is, and makes it the one that opens. Returns its name.
+pub fn import(text: &str, base: &str) -> std::io::Result<String> {
+    let name = unique(base);
+    std::fs::create_dir_all(dir())?;
+    std::fs::write(path(&name), text)?;
+    remember(&name);
+    Ok(name)
+}
+
+/// The packs a song file says it needs.
+pub fn packs_in(text: &str) -> Vec<PackRef> {
+    serde_json::from_str::<SongFile>(text).map(|f| f.packs).unwrap_or_default()
 }
 
 pub struct SongInfo {
@@ -47,11 +121,10 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 pub fn write(name: &str, song: &Song, samples: &[Arc<Sample>]) -> std::io::Result<()> {
-    let file = SongFile { song: song.clone(), names: song.tracks.iter().map(|t| samples[t.sample].id.clone()).collect() };
     std::fs::create_dir_all(dir())?;
     // Write next to it first, so a crash halfway never leaves a broken song behind.
     let tmp = dir().join(format!(".{name}.{EXT}.tmp"));
-    std::fs::write(&tmp, serde_json::to_string(&file)?)?;
+    std::fs::write(&tmp, to_json(song, samples))?;
     std::fs::rename(tmp, path(name))?;
     remember(name);
     Ok(())
@@ -59,7 +132,7 @@ pub fn write(name: &str, song: &Song, samples: &[Arc<Sample>]) -> std::io::Resul
 
 fn read_file(path: &Path, samples: &[Arc<Sample>]) -> Option<Song> {
     let text = std::fs::read_to_string(path).ok()?;
-    let SongFile { mut song, names } = serde_json::from_str(&text).ok()?;
+    let SongFile { mut song, names, .. } = serde_json::from_str(&text).ok()?;
     if song.tracks.is_empty() {
         return None;
     }
@@ -124,19 +197,14 @@ pub fn delete(name: &str) -> std::io::Result<()> {
 }
 
 fn remember(name: &str) {
-    if let Some(dir) = config_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let state = State { current: Some(name.to_owned()) };
-        let _ = std::fs::write(dir.join("state.json"), serde_json::to_string(&state).unwrap_or_default());
-    }
+    let mut state = load_state();
+    state.current = Some(name.to_owned());
+    save_state(&state);
 }
 
 /// The song to open at start: the last one, else the old single-song save from earlier versions, else the demo.
 pub fn open_last(samples: &[Arc<Sample>]) -> (String, Song) {
-    let state: State = config_dir()
-        .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
+    let state = load_state();
     if let Some(name) = state.current {
         if let Some(song) = read(&name, samples) {
             return (name, song);

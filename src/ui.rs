@@ -7,6 +7,7 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2
 use crate::audio::{self, Output, Recorder, Shared};
 use crate::pattern::{Cell, FilterKind, Fx, MAX_STEPS, MAX_TRACKS, PATTERNS, Song, Track};
 use crate::samples::{self, Kind, Sample};
+use crate::community;
 use crate::packs;
 use crate::songs;
 use crate::theme::{self, Theme};
@@ -75,6 +76,13 @@ const CELL: f32 = 30.0;
 /// Pressing record shorter than this keeps it recording; longer is hold-to-record.
 const HOLD_THRESHOLD: Duration = Duration::from_millis(350);
 
+enum ShareState {
+    Idle,
+    Busy(Arc<Mutex<String>>),
+    Done(String),
+    Failed(String),
+}
+
 /// How long a freshly drawn note takes to pop in.
 const POP: Duration = Duration::from_millis(280);
 
@@ -98,6 +106,12 @@ pub struct App {
     name_edit: String,
     songs_open: bool,
     about_open: Option<Instant>,
+    /// The share window: its fields, and what the upload is doing.
+    share_open: bool,
+    share_title: String,
+    share_artist: String,
+    share_description: String,
+    share_state: Arc<Mutex<ShareState>>,
     settings_open: bool,
     confirm_delete: Option<String>,
     shared: Arc<Shared>,
@@ -161,6 +175,11 @@ impl App {
             song_name,
             songs_open: false,
             about_open: None,
+            share_open: false,
+            share_title: String::new(),
+            share_artist: songs::artist(),
+            share_description: String::new(),
+            share_state: Arc::new(Mutex::new(ShareState::Idle)),
             settings_open: false,
             confirm_delete: None,
             shared,
@@ -1706,6 +1725,127 @@ impl App {
         }
     }
 
+    fn open_share(&mut self) {
+        self.share_open = true;
+        self.share_title = self.song_name.clone();
+        if !matches!(*self.share_state.lock().unwrap(), ShareState::Busy(_)) {
+            *self.share_state.lock().unwrap() = ShareState::Idle;
+        }
+    }
+
+    fn start_share(&mut self) {
+        songs::set_artist(&self.share_artist);
+        let _ = songs::write(&self.song_name, &self.song, &self.samples);
+        let progress = Arc::new(Mutex::new("recording…".to_string()));
+        *self.share_state.lock().unwrap() = ShareState::Busy(progress.clone());
+        let (samples, song, json) = (self.samples.clone(), self.song.clone(), songs::to_json(&self.song, &self.samples));
+        let share = community::Share { title: self.share_title.trim().to_owned(), artist: self.share_artist.trim().to_owned(), description: self.share_description.trim().to_owned() };
+        let state = self.share_state.clone();
+        std::thread::spawn(move || {
+            let result = community::share(samples, &song, json, share, &progress);
+            *state.lock().unwrap() = match result {
+                Ok(url) => ShareState::Done(url),
+                Err(e) => ShareState::Failed(e),
+            };
+        });
+    }
+
+    /// Sharing a song with the community site.
+    fn share_window(&mut self, ctx: &egui::Context) {
+        if !self.share_open {
+            return;
+        }
+        let th = self.theme.clone();
+        let mut open = true;
+        let mut go = false;
+        let state = match &*self.share_state.lock().unwrap() {
+            ShareState::Idle => ShareState::Idle,
+            ShareState::Busy(p) => ShareState::Busy(p.clone()),
+            ShareState::Done(u) => ShareState::Done(u.clone()),
+            ShareState::Failed(e) => ShareState::Failed(e.clone()),
+        };
+        egui::Window::new("Share")
+            .id(egui::Id::new("share_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .frame(egui::Frame::window(&ctx.global_style()).fill(th.bg_dark).inner_margin(egui::Margin::same(16)))
+            .show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                match &state {
+                    ShareState::Done(url) => {
+                        section(ui, &th, "Shared");
+                        ui.label(egui::RichText::new("Your song is on the community site. Anyone can listen, vote, and open it in Sequencer.").color(th.fg));
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(url).color(th.accent));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.add(egui::Button::new(egui::RichText::new("Open in browser").color(th.on(th.accent))).fill(th.accent).min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                            }
+                            if ui.add(egui::Button::new("Copy link").min_size(Vec2::new(0.0, CONTROL_H))).clicked() {
+                                ui.ctx().copy_text(url.clone());
+                            }
+                        });
+                        return;
+                    }
+                    ShareState::Busy(progress) => {
+                        section(ui, &th, "Sharing");
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(egui::RichText::new(progress.lock().unwrap().clone()).color(th.fg));
+                        });
+                        return;
+                    }
+                    _ => {}
+                }
+                section(ui, &th, "Share with the community");
+                ui.label(egui::RichText::new("Others can listen to it, vote for it and open it in Sequencer.").color(th.fg_dim).size(12.0));
+                ui.add_space(4.0);
+                egui::Grid::new("share_fields").num_columns(2).spacing(Vec2::new(10.0, 8.0)).show(ui, |ui| {
+                    row_label(ui, &th, "Title");
+                    ui.add_sized([340.0, CONTROL_H], egui::TextEdit::singleline(&mut self.share_title).char_limit(80).vertical_align(egui::Align::Center));
+                    ui.end_row();
+                    row_label(ui, &th, "Your name");
+                    ui.add_sized([340.0, CONTROL_H], egui::TextEdit::singleline(&mut self.share_artist).char_limit(60).hint_text("optional").vertical_align(egui::Align::Center));
+                    ui.end_row();
+                    row_label(ui, &th, "About it");
+                    ui.add_sized([340.0, 64.0], egui::TextEdit::multiline(&mut self.share_description).char_limit(500).hint_text("optional"));
+                    ui.end_row();
+                });
+                let used: Vec<String> = {
+                    let mut ids: Vec<&str> = self.song.tracks.iter().map(|t| self.samples[t.sample].pack.as_str()).filter(|p| !matches!(*p, "classic" | "user")).collect();
+                    ids.sort();
+                    ids.dedup();
+                    ids.iter().filter_map(|id| packs::CATALOG.iter().find(|e| e.id == *id)).map(|e| e.name.to_owned()).collect()
+                };
+                if !used.is_empty() {
+                    ui.label(egui::RichText::new(format!("Uses {}. Whoever opens it gets them installed.", used.join(", "))).color(th.fg_dim).size(11.0));
+                }
+                if songs::uses_own_sounds(&self.song, &self.samples) {
+                    ui.label(egui::RichText::new("Uses your own recordings: others hear them in the recording, but they can't open them.").color(th.yellow).size(11.0));
+                }
+                if let ShareState::Failed(e) = &state {
+                    ui.label(egui::RichText::new(format!("Sharing failed: {e}")).color(th.red).size(12.0));
+                }
+                ui.add_space(6.0);
+                let ready = !self.share_title.trim().is_empty();
+                let button = egui::Button::new(egui::RichText::new("Share").color(th.on(th.accent))).fill(th.accent).min_size(Vec2::new(100.0, CONTROL_H));
+                if ui.add_enabled(ready, button).clicked() {
+                    go = true;
+                }
+                ui.label(egui::RichText::new(format!("Goes to {}", community::base_url())).color(th.fg_dim).size(10.0));
+            });
+        if go {
+            self.start_share();
+        }
+        if !open {
+            self.share_open = false;
+        }
+    }
+
     fn songs_window(&mut self, ctx: &egui::Context) {
         if !self.songs_open {
             return;
@@ -1738,6 +1878,11 @@ impl App {
                         action = Some(("late", "Late Night".into()));
                     }
                 });
+                ui.add_space(6.0);
+                section(ui, &th, "Community");
+                if ui.add(egui::Button::new(format!("Share “{}”…", short(&self.song_name, 24))).min_size(Vec2::new(0.0, CONTROL_H))).on_hover_text("put this song on the community site, where others can listen, vote and open it").clicked() {
+                    action = Some(("share", String::new()));
+                }
                 ui.add_space(6.0);
                 section(ui, &th, "Your songs");
                 egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -1796,6 +1941,10 @@ impl App {
                 self.confirm_delete = None;
                 self.open_song(&name);
                 self.songs_open = false;
+            }
+            Some(("share", _)) => {
+                self.songs_open = false;
+                self.open_share();
             }
             Some(("ask", name)) => self.confirm_delete = Some(name),
             Some(("delete", name)) => {
@@ -1919,6 +2068,7 @@ impl eframe::App for App {
         self.recording_panel(&ctx);
         self.fx_window(&ctx);
         self.songs_window(&ctx);
+        self.share_window(&ctx);
         self.about_window(&ctx);
         self.finish_installs();
         self.sounds_window(&ctx);
@@ -1941,7 +2091,8 @@ impl eframe::App for App {
         // Smooth playhead while playing; otherwise only poll a few times a second (meters, theme).
         // Input still triggers an immediate repaint.
         let animating = !self.sparks.is_empty() || !self.pops.is_empty() || !self.ghosts.is_empty() || !self.rings.is_empty() || !self.glints.is_empty();
-        let busy = animating || self.playing() || self.about_open.is_some() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
+        let sharing = matches!(*self.share_state.lock().unwrap(), ShareState::Busy(_));
+        let busy = animating || sharing || self.playing() || self.about_open.is_some() || self.recorder.recording() || self.fx_loop.is_some() || !self.installing.lock().unwrap().is_empty() || self.meters.iter().any(|m| *m > 0.01);
         ctx.request_repaint_after(Duration::from_millis(if busy { 16 } else { 250 }));
     }
 

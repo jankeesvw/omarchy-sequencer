@@ -69,6 +69,10 @@ Songs save themselves while you work, in `~/Music/Sequencer`. **Songs** opens, s
 
 ![The songs window](media/songs.webp)
 
+### Shares your songs
+
+**Songs → Share** puts a song on the community site, where others can listen to it, vote for it, and open it in the app. `omarchy-sequencer --open <song url>` opens a shared song, and installs any sound packs it needs.
+
 ### Wears your Omarchy theme
 
 It takes the colours and font of your theme, light ones included, and follows along when you switch.
@@ -97,6 +101,7 @@ It takes the colours and font of your theme, light ones included, and follows al
 |---|---|
 | `omarchy-sequencer --play` | Start playing right away |
 | `omarchy-sequencer --preset demo`, `rave`, `late-night` | Start a new song from a preset |
+| `omarchy-sequencer --open <song url>` | Open a song from the community site, with the packs it needs |
 | `omarchy-sequencer --install-pack <pack>` | Download a sound pack; without a name it lists them |
 
 ## Files

@@ -591,6 +591,19 @@ where
 
 /// Renders the current pattern a number of times offline to a stereo WAV in ~/Music.
 pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<std::path::PathBuf, String> {
+    let dir = dirs::audio_dir().or_else(dirs::home_dir).ok_or("no music folder")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let letter = (b'a' + song.current as u8) as char;
+    let path = (1..)
+        .map(|i| dir.join(format!("sequencer-{letter}-{:.0}bpm-{i:02}.wav", song.bpm)))
+        .find(|p| !p.exists())
+        .unwrap();
+    render(samples, song, loops, &path)?;
+    Ok(path)
+}
+
+/// Renders the current pattern `loops` times, plus the tail of the effects, to a stereo WAV at `path`.
+pub fn render(samples: Vec<Arc<Sample>>, song: &Song, loops: usize, path: &std::path::Path) -> Result<(), String> {
     const RATE: u32 = 44_100;
     let mut song = song.clone();
     song.queued = None;
@@ -601,15 +614,8 @@ pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<st
     let music = bar * loops as f64;
     let frames = music as usize + RATE as usize * 2;
 
-    let dir = dirs::audio_dir().or_else(dirs::home_dir).ok_or("no music folder")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let letter = (b'a' + song.current as u8) as char;
-    let path = (1..)
-        .map(|i| dir.join(format!("sequencer-{letter}-{:.0}bpm-{i:02}.wav", song.bpm)))
-        .find(|p| !p.exists())
-        .unwrap();
     let spec = hound::WavSpec { channels: 2, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
-    let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
+    let mut w = hound::WavWriter::create(path, spec).map_err(|e| e.to_string())?;
     let mut buf = vec![0.0f32; 1024];
     let mut done = 0;
     while done < frames {
@@ -624,8 +630,7 @@ pub fn export(samples: Vec<Arc<Sample>>, song: &Song, loops: usize) -> Result<st
         }
         done += n;
     }
-    w.finalize().map_err(|e| e.to_string())?;
-    Ok(path)
+    w.finalize().map_err(|e| e.to_string())
 }
 
 /// Push-to-talk recording from the default microphone, like Voxtype: the input stream is only open while recording.
