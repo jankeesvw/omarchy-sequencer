@@ -1,0 +1,70 @@
+# Builds Sequencer for x86_64 and aarch64 Linux on every pull request, and on a
+# version tag (v1.2.3) attaches both tarballs to that release, as a draft when it
+# doesn't exist yet.
+name: Build
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          name=omarchy-sequencer
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r ".packages[] | select(.name == \"$name\") | .version")
+          dir=$name-$version
+          mkdir "$dir"
+          cp target/release/$name packaging/$name.desktop packaging/$name.svg LICENSE README.md "$dir"/
+          tar czf "$name-$version-${{ matrix.arch }}-linux.tar.gz" "$dir"
+          # install.sh downloads this name from the latest release.
+          cp "$name-$version-${{ matrix.arch }}-linux.tar.gz" "$name-${{ matrix.arch }}-linux.tar.gz"
+          sha256sum *.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omarchy-sequencer-${{ matrix.arch }}-linux
+          path: "*.tar.gz"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "$TAG" --notes ""
+          gh release upload "$TAG" *.tar.gz --clobber
+          sha256sum *.tar.gz

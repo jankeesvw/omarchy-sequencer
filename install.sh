@@ -14,10 +14,15 @@ if [[ -f Cargo.toml ]] && grep -q "^name = \"$name\"" Cargo.toml 2>/dev/null; th
   binary=target/release/$name
   data=packaging
 else
+  case $(uname -m) in
+    x86_64) arch=x86_64 ;;
+    aarch64 | arm64) arch=aarch64 ;;
+    *) echo "Sequencer has no release for $(uname -m); build it from a checkout with cargo." >&2; exit 1 ;;
+  esac
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   echo "Downloading the latest release of Sequencer…"
-  curl -fsSL "https://github.com/$repo/releases/latest/download/$name-x86_64-linux.tar.gz" | tar xz -C "$tmp"
+  curl -fsSL "https://github.com/$repo/releases/latest/download/$name-$arch-linux.tar.gz" | tar xz -C "$tmp"
   dir=$(echo "$tmp/$name"-*)
   binary=$dir/$name
   data=$dir
